@@ -576,6 +576,20 @@ CFLAGS += -DCIRCUITPY_SSL_MBEDTLS=$(CIRCUITPY_SSL_MBEDTLS)
 CIRCUITPY_STAGE ?= 0
 CFLAGS += -DCIRCUITPY_STAGE=$(CIRCUITPY_STAGE)
 
+# Experimental PicoPad game engine (off by default).
+CIRCUITPY_PICOGAME ?= 0
+CFLAGS += -DCIRCUITPY_PICOGAME=$(CIRCUITPY_PICOGAME)
+# Fast async-DMA Display backend: needs a port-specific common-hal (only the
+# raspberrypi port provides one). Boards without it build picogame with the
+# portable bus.send renderer. Gates both the C type and common-hal/picogame/Display.c.
+CIRCUITPY_PICOGAME_FAST_DISPLAY ?= 0
+CFLAGS += -DCIRCUITPY_PICOGAME_FAST_DISPLAY=$(CIRCUITPY_PICOGAME_FAST_DISPLAY)
+# Does this board's panel controller support 12-bit RGB444 (COLMOD)? A capability flag the
+# board declares (ST7789/ST7735 = 1, ILI9341 = 0); exposed as picogame.RGB444_SUPPORTED so a
+# game can auto-enable Display(rgb444=...) only where it works. Default 0 (safe RGB565).
+CIRCUITPY_PICOGAME_RGB444 ?= 0
+CFLAGS += -DCIRCUITPY_PICOGAME_RGB444=$(CIRCUITPY_PICOGAME_RGB444)
+
 CIRCUITPY_STATUS_BAR ?= 1
 CFLAGS += -DCIRCUITPY_STATUS_BAR=$(CIRCUITPY_STATUS_BAR)
 

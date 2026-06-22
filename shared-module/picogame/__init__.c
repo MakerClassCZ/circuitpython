@@ -1,0 +1,764 @@
+// This file is part of the CircuitPython project: https://circuitpython.org
+//
+// SPDX-License-Identifier: MIT
+//
+// picogame portable render core: strip-based, arbitrary-size blitting.
+// Painter's order: clear strip to background, draw layers/sprites bottom-to-top.
+
+#include <math.h>
+#include <string.h>
+#include "py/runtime.h"
+#include "shared-module/picogame/__init__.h"
+#include "shared-module/picogame/Tilemap.h"
+#include "shared-module/picogame/Particles.h"
+#include "shared-module/picogame/Canvas.h"
+#include "shared-bindings/busdisplay/BusDisplay.h"
+#include "shared-module/displayio/display_core.h"
+#include "shared-bindings/displayio/__init__.h"
+
+// Shared dirty-rect accumulator over a contiguous int32 [x1,y1,x2,y2]. Canvas and Tilemap both end in
+// `int32_t dx1,dy1,dx2,dy2`, so their public dirty fns are thin wrappers passing &self->dx1 here.
+// Sentinels are the INT32 extremes (not int16) so a big-world scene coord past +-32767 px still
+// accumulates correctly.
+void picogame_dirty_reset(int32_t *r) {
+    r[0] = 0x7fffffff;
+    r[1] = 0x7fffffff;
+    r[2] = -0x7fffffff - 1;
+    r[3] = -0x7fffffff - 1;
+}
+
+void picogame_dirty_union(int32_t *r, int x1, int y1, int x2, int y2) {
+    if (x1 < r[0]) {
+        r[0] = x1;
+    }
+    if (y1 < r[1]) {
+        r[1] = y1;
+    }
+    if (x2 > r[2]) {
+        r[2] = x2;
+    }
+    if (y2 > r[3]) {
+        r[3] = y2;
+    }
+}
+
+bool picogame_dirty_take(int32_t *r, int *x1, int *y1, int *x2, int *y2) {
+    bool dirty = (r[0] < r[2]) && (r[1] < r[3]);
+    if (dirty) {
+        *x1 = r[0];
+        *y1 = r[1];
+        *x2 = r[2];
+        *y2 = r[3];
+    }
+    picogame_dirty_reset(r);
+    return dirty;
+}
+
+// Halve each RGB565 channel of a wire-order pixel (50% darken, for shadow mode).
+static inline uint16_t picogame_darken(uint16_t wire) {
+    uint16_t c = (uint16_t)((wire >> 8) | (wire << 8));
+    uint16_t r = ((c >> 11) & 0x1f) >> 1;
+    uint16_t g = ((c >> 5) & 0x3f) >> 1;
+    uint16_t b = (c & 0x1f) >> 1;
+    uint16_t o = (uint16_t)((r << 11) | (g << 5) | b);
+    return (uint16_t)((o >> 8) | (o << 8));
+}
+
+// 4x4 ordered (Bayer) dither thresholds, 0..15.
+static const uint8_t picogame_bayer4[4][4] = {
+    { 0, 8, 2, 10 },
+    { 12, 4, 14, 6 },
+    { 3, 11, 1, 9 },
+    { 15, 7, 13, 5 },
+};
+
+// Multiply two wire-order RGB565 pixels per channel (TINT: colour the source, keep its shading).
+static inline uint16_t picogame_mul565(uint16_t a, uint16_t b) {
+    uint16_t ca = (uint16_t)((a >> 8) | (a << 8));
+    uint16_t cb = (uint16_t)((b >> 8) | (b << 8));
+    // /31 and /63 via reciprocal-multiply (bit-identical over the full product domain 0..961 / 0..3969):
+    // avoids a soft-divide per tinted pixel on M0+ (no HW divide); pure integer, fine on every MCU.
+    uint16_t r = (uint16_t)((((ca >> 11) & 0x1f) * ((cb >> 11) & 0x1f) * 529) >> 14);
+    uint16_t g = (uint16_t)((((ca >> 5) & 0x3f) * ((cb >> 5) & 0x3f) * 2081) >> 17);
+    uint16_t bl = (uint16_t)(((ca & 0x1f) * (cb & 0x1f) * 529) >> 14);
+    uint16_t o = (uint16_t)((r << 11) | (g << 5) | bl);
+    return (uint16_t)((o >> 8) | (o << 8));
+}
+
+// Write one opaque source pixel through the effect. (x, y) are screen coords (for DITHER).
+static inline void picogame_fx_put(uint16_t *dst, uint16_t src, int x, int y, const picogame_fx_t *fx) {
+    if (fx == NULL) {
+        *dst = src;
+        return;
+    }
+    switch (fx->mode) {
+        case PICOGAME_FX_SHADOW:
+            *dst = picogame_darken(*dst);
+            break;
+        case PICOGAME_FX_FLASH:
+            *dst = fx->color;
+            break;
+        case PICOGAME_FX_TINT:
+            *dst = picogame_mul565(src, fx->color);   // colour the sprite, keep its shading
+            break;
+        case PICOGAME_FX_DITHER:
+            if (picogame_bayer4[y & 3][x & 3] >= fx->level) {
+                *dst = src;                       // else: pixel skipped -> shows through
+            }
+            break;
+        default:
+            *dst = src;
+            break;
+    }
+}
+
+static inline bool src_pixel(const picogame_bitmap_obj_t *bm, int srow, int sx, uint16_t *out);
+
+void picogame_blit_bitmap(
+    uint16_t *buf, int bw, int bh, int ox, int oy,
+    picogame_bitmap_obj_t *bm, int dx0, int dy0, int frame, bool fx, bool fy,
+    bool transpose, const picogame_fx_t *fxm) {
+    if (bm == NULL) {
+        return;
+    }
+    int sw = bm->width;
+    int sh = bm->height;
+
+    // Guard the frame index: sprite.frame is a free uint8_t, so an out-of-range
+    // value (bad wrap / overflow in game code) would read past the sheet data.
+    // Wrap into [0, frames) - cheap and animation-friendly.
+    if (bm->frames > 1) {
+        frame %= bm->frames;
+    } else {
+        frame = 0;
+    }
+
+    int frame_col0 = frame * sw;
+    int stride0 = bm->stride;
+
+    // Transpose path: swap source x/y (a cheap 90deg rotate when combined with flips -> all 8
+    // orientations, no cos/sin/affine). The drawn footprint swaps to sh x sw. Per-pixel sampling
+    // (no per-row srow precompute), used only when requested; flips + fx still apply.
+    if (transpose) {
+        int dw = sh, dh = sw;                      // footprint swaps
+        int xs = picogame_imax(dx0, ox), ys = picogame_imax(dy0, oy);
+        int xe = picogame_imin(dx0 + dw, ox + bw), ye = picogame_imin(dy0 + dh, oy + bh);
+        if (xs >= xe || ys >= ye) {
+            return;
+        }
+        for (int y = ys; y < ye; y++) {
+            int ly = y - dy0;                      // -> source X (0..sw-1)
+            int su = fx ? sw - 1 - ly : ly;        // per-row: source column is constant across the row
+            uint16_t *dst = buf + (y - oy) * bw + (xs - ox);
+            int lx = xs - dx0;
+            int sv = fy ? sh - 1 - lx : lx;        // source row: step it, no per-pixel ternary
+            int svstep = fy ? -1 : 1;
+            for (int x = xs; x < xe; x++) {
+                uint16_t val;
+                if (src_pixel(bm, sv * stride0 + frame_col0, su, &val)) {
+                    picogame_fx_put(dst, val, x, y, fxm);
+                }
+                dst++;
+                sv += svstep;
+            }
+        }
+        return;
+    }
+
+    int x_start = picogame_imax(dx0, ox);
+    int y_start = picogame_imax(dy0, oy);
+    int x_end = picogame_imin(dx0 + sw, ox + bw);
+    int y_end = picogame_imin(dy0 + sh, oy + bh);
+    if (x_start >= x_end || y_start >= y_end) {
+        return;
+    }
+
+    int frame_col = frame * sw;
+    int stride = bm->stride;
+    bool transp = bm->has_transparent;
+
+    if (bm->format == PICOGAME_FMT_PAL8) {
+        const uint8_t *data = bm->data;
+        const uint16_t *pal = bm->palette;
+        uint8_t key = (uint8_t)bm->transparent;
+        // Contract: PAL8 indices MUST be < palette length (caller's responsibility). An out-of-range
+        // index is undefined behaviour: it reads past the palette - usually a garbage colour, but on
+        // some heap layouts / platforms (e.g. ESP32-S3 heap_caps regions) it CAN fault. We deliberately
+        // do NOT clamp per pixel: that cost ~3 cyc/px (cmp+sbcs+ands) here, ~8% on blit-bound frames.
+        //
+        // TO RESTORE FULL BOUNDS-SAFETY (at that cost) reinstate the clamp - add `unsigned pe =
+        // bm->pal_entries;` here and `if (idx >= pe) { idx = 0; }` after each `idx = data[...]` in BOTH
+        // loops below, and the matching guard in src_pixel() (search "blit contract").
+        for (int y = y_start; y < y_end; y++) {
+            int sy = y - dy0;
+            if (fy) {
+                sy = sh - 1 - sy;
+            }
+            int srow = sy * stride + frame_col;
+            uint16_t *dst = buf + (y - oy) * bw + (x_start - ox);
+            int sx = x_start - dx0, xstep = 1;       // hoist flip_x: walk sx +/-1, no per-pixel test
+            if (fx) {
+                sx = sw - 1 - sx;
+                xstep = -1;
+            }
+            if (fxm == NULL) {                   // plain copy (most sprites): no per-pixel fx branch/call
+                for (int x = x_start; x < x_end; x++) {
+                    uint8_t idx = data[srow + sx];
+                    if (!transp || idx != key) {
+                        *dst = pal[idx];
+                    }
+                    dst++;
+                    sx += xstep;
+                }
+            } else {
+                for (int x = x_start; x < x_end; x++) {
+                    uint8_t idx = data[srow + sx];
+                    if (!transp || idx != key) {
+                        picogame_fx_put(dst, pal[idx], x, y, fxm);
+                    }
+                    dst++;
+                    sx += xstep;
+                }
+            }
+        }
+    } else { // PICOGAME_FMT_RGB565
+        // bm->data is a GC-allocated Python buffer (>=4-byte aligned), so the 16-bit
+        // view is safe; xtensa's -Wcast-align can't see that, so silence it here.
+        #pragma GCC diagnostic push
+        #pragma GCC diagnostic ignored "-Wcast-align"
+        const uint16_t *data = (const uint16_t *)bm->data;
+        #pragma GCC diagnostic pop
+        uint16_t key = bm->transparent;
+        for (int y = y_start; y < y_end; y++) {
+            int sy = y - dy0;
+            if (fy) {
+                sy = sh - 1 - sy;
+            }
+            int srow = sy * stride + frame_col;
+            uint16_t *dst = buf + (y - oy) * bw + (x_start - ox);
+            int sx = x_start - dx0, xstep = 1;       // hoist flip_x: walk sx +/-1, no per-pixel test
+            if (fx) {
+                sx = sw - 1 - sx;
+                xstep = -1;
+            }
+            if (fxm == NULL) {                   // plain copy (most sprites): no per-pixel fx branch/call
+                for (int x = x_start; x < x_end; x++) {
+                    uint16_t v = data[srow + sx];
+                    if (!transp || v != key) {
+                        *dst = v;
+                    }
+                    dst++;
+                    sx += xstep;
+                }
+            } else {
+                for (int x = x_start; x < x_end; x++) {
+                    uint16_t v = data[srow + sx];
+                    if (!transp || v != key) {
+                        picogame_fx_put(dst, v, x, y, fxm);
+                    }
+                    dst++;
+                    sx += xstep;
+                }
+            }
+        }
+    }
+}
+
+// Fetch one source pixel; returns false if transparent. Used by the scaled/affine
+// paths (the unscaled fast path inlines this for speed).
+static inline bool src_pixel(const picogame_bitmap_obj_t *bm, int srow, int sx, uint16_t *out) {
+    if (bm->format == PICOGAME_FMT_PAL8) {
+        uint8_t idx = ((const uint8_t *)bm->data)[srow + sx];
+        if (bm->has_transparent && idx == (uint8_t)bm->transparent) {
+            return false;
+        }
+        *out = bm->palette[idx];                 // indices must be < palette length (see blit contract)
+        return true;
+    }
+    // GC buffer is >=4-byte aligned; silence xtensa -Wcast-align (see picogame_blit_bitmap).
+    #pragma GCC diagnostic push
+    #pragma GCC diagnostic ignored "-Wcast-align"
+    uint16_t v = ((const uint16_t *)bm->data)[srow + sx];
+    #pragma GCC diagnostic pop
+    if (bm->has_transparent && v == bm->transparent) {
+        return false;
+    }
+    *out = v;
+    return true;
+}
+
+void picogame_blit_bitmap_scaled(
+    uint16_t *buf, int bw, int bh, int ox, int oy,
+    picogame_bitmap_obj_t *bm, int dx0, int dy0, int frame, bool fx, bool fy,
+    uint16_t scale, const picogame_fx_t *fxm) {
+    if (bm == NULL || scale == 0) {
+        return;
+    }
+    int sw = bm->width, sh = bm->height;
+    if (bm->frames > 1) {
+        frame %= bm->frames;
+    } else {
+        frame = 0;
+    }
+    int dw = (sw * scale) >> 8, dh = (sh * scale) >> 8;
+    if (dw <= 0 || dh <= 0) {
+        return;
+    }
+    int x_start = picogame_imax(dx0, ox), y_start = picogame_imax(dy0, oy);
+    int x_end = picogame_imin(dx0 + dw, ox + bw), y_end = picogame_imin(dy0 + dh, oy + bh);
+    if (x_start >= x_end || y_start >= y_end) {
+        return;
+    }
+    int frame_col = frame * sw, stride = bm->stride;
+    uint32_t step = ((uint32_t)1 << 24) / scale;     // source px per dest px, 16.16
+    for (int y = y_start; y < y_end; y++) {
+        int sy = (int)(((uint32_t)(y - dy0) * step) >> 16);
+        if (sy >= sh) {
+            sy = sh - 1;
+        }
+        if (fy) {
+            sy = sh - 1 - sy;
+        }
+        int srow = sy * stride + frame_col;
+        uint16_t *drow = buf + (y - oy) * bw;
+        uint32_t xacc = (uint32_t)(x_start - dx0) * step;
+        for (int x = x_start; x < x_end; x++) {
+            int sx = (int)(xacc >> 16);
+            xacc += step;
+            if (sx >= sw) {
+                sx = sw - 1;
+            }
+            if (fx) {
+                sx = sw - 1 - sx;
+            }
+            uint16_t val;
+            if (src_pixel(bm, srow, sx, &val)) {
+                picogame_fx_put(&drow[x - ox], val, x, y, fxm);
+            }
+        }
+    }
+}
+
+// Quarter-wave Q15 sine table (0..90 deg) -> fixed-point trig for the rotation setup, so the
+// affine path needs no float `sinf`/`cosf` (RP2040 has no FPU). cos(d) = sin(d+90).
+static const int16_t pg_sin_q15_quad[91] = {
+    0, 572, 1144, 1715, 2286, 2856, 3425, 3993, 4560, 5126,
+    5690, 6252, 6813, 7371, 7927, 8481, 9032, 9580, 10126, 10668,
+    11207, 11743, 12275, 12803, 13328, 13848, 14364, 14876, 15383, 15886,
+    16383, 16876, 17364, 17846, 18323, 18794, 19260, 19720, 20173, 20621,
+    21062, 21497, 21925, 22347, 22762, 23170, 23571, 23964, 24351, 24730,
+    25101, 25465, 25821, 26169, 26509, 26841, 27165, 27481, 27788, 28087,
+    28377, 28659, 28932, 29196, 29451, 29697, 29934, 30162, 30381, 30591,
+    30791, 30982, 31163, 31335, 31498, 31650, 31794, 31927, 32051, 32165,
+    32269, 32364, 32448, 32523, 32587, 32642, 32687, 32722, 32747, 32762,
+    32767,
+};
+static int32_t pg_sin_q15(int deg) {
+    deg %= 360;
+    if (deg < 0) {
+        deg += 360;
+    }
+    if (deg <= 90) {
+        return pg_sin_q15_quad[deg];
+    }
+    if (deg <= 180) {
+        return pg_sin_q15_quad[180 - deg];
+    }
+    if (deg <= 270) {
+        return -pg_sin_q15_quad[deg - 180];
+    }
+    return -pg_sin_q15_quad[360 - deg];
+}
+static int32_t pg_cos_q15(int deg) {
+    return pg_sin_q15(deg + 90);
+}
+
+// Forward-transform a w*h rect's 4 corners through (integer pivot, 8.8 scale, Q15 rotation) and
+// return the screen-space AABB. INTEGER (Q16) - measured ~40x faster than the old float version on
+// the M0+ flagship (soft-float), and faster on every target (picobench affine_q16 vs affine_float).
+// Runs once per rotated sprite (not per pixel). Each corner is FLOORED (arithmetic >>23 = /(256*32768)),
+// so the returned box is <= the true min and the callers' +1/+2 keep the box CONTAINING the sprite
+// (the affine blitter clips per pixel anyway, so a >=1px-too-large box only repaints, never clips).
+static void corners_bbox(int sw, int sh, int px, int py, int pivx, int pivy,
+    int32_t scale, int32_t cos_q, int32_t sin_q, int *minx, int *miny, int *maxx, int *maxy) {
+    int nx = 1 << 30, xx = -(1 << 30), ny = 1 << 30, xy = -(1 << 30);
+    int cxs[4] = { 0, sw, 0, sw }, cys[4] = { 0, 0, sh, sh };
+    for (int k = 0; k < 4; k++) {
+        int64_t du = (int64_t)(cxs[k] - pivx) * scale;        // (corner - pivot) in pixels<<8
+        int64_t dv = (int64_t)(cys[k] - pivy) * scale;
+        int X = px + (int)((du * cos_q - dv * sin_q) >> 23);  // >>23 = /(256 * 32768): drop the 8.8 + Q15
+        int Y = py + (int)((du * sin_q + dv * cos_q) >> 23);
+        if (X < nx) {
+            nx = X;
+        }
+        if (X > xx) {
+            xx = X;
+        }
+        if (Y < ny) {
+            ny = Y;
+        }
+        if (Y > xy) {
+            xy = Y;
+        }
+    }
+    *minx = nx;
+    *miny = ny;
+    *maxx = xx;
+    *maxy = xy;
+}
+
+void picogame_blit_bitmap_affine(
+    uint16_t *buf, int bw, int bh, int ox, int oy,
+    picogame_bitmap_obj_t *bm, int px, int py, int pivx, int pivy,
+    int frame, bool fx, bool fy, uint16_t scale, int angle, const picogame_fx_t *fxm) {
+    if (bm == NULL || scale == 0) {
+        return;
+    }
+    int sw = bm->width, sh = bm->height;
+    if (bm->frames > 1) {
+        frame %= bm->frames;
+    } else {
+        frame = 0;
+    }
+    int frame_col = frame * sw, stride = bm->stride;
+    int32_t cos_q = pg_cos_q15(angle), sin_q = pg_sin_q15(angle);   // fixed-point trig (LUT)
+    int minx, maxx, miny, maxy;
+    corners_bbox(sw, sh, px, py, pivx, pivy, (int32_t)scale, cos_q, sin_q, &minx, &miny, &maxx, &maxy);
+    int x_start = picogame_imax(minx, ox), y_start = picogame_imax(miny, oy);
+    int x_end = picogame_imin(maxx + 1, ox + bw), y_end = picogame_imin(maxy + 1, oy + bh);
+    if (x_start >= x_end || y_start >= y_end) {
+        return;
+    }
+    // inverse map (16.16 fixed-point): u = pivx + (ic*(X-px) + is*(Y-py));
+    //                                  v = pivy + (-is*(X-px) + ic*(Y-py))
+    // ic = (cs/sf)*65536 = cos_q15 * 512 / scale - computed in pure integer (no float).
+    int32_t nic = cos_q * 512, nis = sin_q * 512;
+    int sc = (int)scale;
+    int ic = (nic >= 0 ? nic + sc / 2 : nic - sc / 2) / sc;
+    int is = (nis >= 0 ? nis + sc / 2 : nis - sc / 2) / sc;
+    for (int y = y_start; y < y_end; y++) {
+        int dyf = y - py;
+        int dxf = x_start - px;
+        long long uacc = ((long long)pivx << 16) + (long long)ic * dxf + (long long)is * dyf;
+        long long vacc = ((long long)pivy << 16) - (long long)is * dxf + (long long)ic * dyf;
+        uint16_t *drow = buf + (y - oy) * bw;
+        for (int x = x_start; x < x_end; x++) {
+            int iu = (int)(uacc >> 16), iv = (int)(vacc >> 16);
+            uacc += ic;
+            vacc -= is;
+            if (iu >= 0 && iu < sw && iv >= 0 && iv < sh) {
+                int su = fx ? sw - 1 - iu : iu;
+                int sv = fy ? sh - 1 - iv : iv;
+                uint16_t val;
+                if (src_pixel(bm, sv * stride + frame_col, su, &val)) {
+                    picogame_fx_put(&drow[x - ox], val, x, y, fxm);
+                }
+            }
+        }
+    }
+}
+
+void picogame_sprite_aabb(const picogame_sprite_obj_t *s, int *x1, int *y1, int *x2, int *y2) {
+    int w = (s->bitmap != NULL) ? s->bitmap->width : 0;
+    int h = (s->bitmap != NULL) ? s->bitmap->height : 0;
+    if (s->angle == 0) {
+        int sw = (w * s->scale) >> 8, sh = (h * s->scale) >> 8;
+        if ((s->flags & PICOGAME_SPR_TRANSPOSE) && s->scale == 256) {   // transpose only on the fast
+            int t = sw;                            // path (scale==256); scaled blitter ignores it, so
+            sw = sh;                               // swapping here for scale!=256 would mistrack -> trail
+            sh = t;
+        }
+        int tx = (s->x >> 8) - ((int)s->anchor_x * sw >> 8);
+        int ty = (s->y >> 8) - ((int)s->anchor_y * sh >> 8);
+        *x1 = tx;
+        *y1 = ty;
+        *x2 = tx + sw;
+        *y2 = ty + sh;
+        return;
+    }
+    int32_t cos_q = pg_cos_q15(s->angle), sin_q = pg_sin_q15(s->angle);   // Q15 LUT trig, no sinf/cosf
+    int px = s->x >> 8, py = s->y >> 8;
+    int pivx = ((int)s->anchor_x * w) >> 8, pivy = ((int)s->anchor_y * h) >> 8;   // integer pivot (matches the blit)
+    int minx, maxx, miny, maxy;
+    corners_bbox(w, h, px, py, pivx, pivy, (int32_t)s->scale, cos_q, sin_q, &minx, &miny, &maxx, &maxy);
+    *x1 = minx - 1;
+    *y1 = miny - 1;
+    *x2 = maxx + 2;
+    *y2 = maxy + 2;
+}
+
+// clip_x/clip_y = the strip buffer's screen origin; vx/vy = view offset added to
+// the sprite's scene position to get its screen position.
+static void blit_sprite(uint16_t *buf, int bw, int bh, int clip_x, int clip_y,
+    picogame_sprite_obj_t *spr, int vx, int vy) {
+    bool fx = (spr->flags & PICOGAME_SPR_FLIP_X) != 0;
+    bool fy = (spr->flags & PICOGAME_SPR_FLIP_Y) != 0;
+    bool tr = (spr->flags & PICOGAME_SPR_TRANSPOSE) != 0;   // 90deg transpose (fast path only)
+    // One effect at a time (dither > flash > tint > shadow priority); NULL = no effect (fast path).
+    picogame_fx_t fxm = { PICOGAME_FX_NONE, 0, 0 };
+    if (spr->flags & PICOGAME_SPR_DITHER) {
+        fxm.mode = PICOGAME_FX_DITHER;
+        fxm.level = spr->dither;
+    } else if (spr->flags & PICOGAME_SPR_FLASH) {
+        fxm.mode = PICOGAME_FX_FLASH;
+        fxm.color = spr->flash_color;
+    } else if (spr->flags & PICOGAME_SPR_TINT) {
+        fxm.mode = PICOGAME_FX_TINT;
+        fxm.color = spr->flash_color;             // shared colour field (flash/tint exclusive)
+    } else if (spr->flags & PICOGAME_SPR_SHADOW) {
+        fxm.mode = PICOGAME_FX_SHADOW;
+    }
+    const picogame_fx_t *fxp = (fxm.mode == PICOGAME_FX_NONE) ? NULL : &fxm;
+    if (spr->angle == 0 && spr->scale == 256) {
+        int tx, ty;
+        picogame_sprite_topleft(spr, &tx, &ty);
+        picogame_blit_bitmap(buf, bw, bh, clip_x, clip_y, spr->bitmap,
+            tx + vx, ty + vy, spr->frame, fx, fy, tr, fxp);
+    } else if (spr->angle == 0) {
+        int tx, ty;
+        picogame_sprite_topleft(spr, &tx, &ty);
+        picogame_blit_bitmap_scaled(buf, bw, bh, clip_x, clip_y, spr->bitmap,
+            tx + vx, ty + vy, spr->frame, fx, fy, spr->scale, fxp);
+    } else {
+        int w = (spr->bitmap != NULL) ? spr->bitmap->width : 0;
+        int h = (spr->bitmap != NULL) ? spr->bitmap->height : 0;
+        int pivx = ((int)spr->anchor_x * w) >> 8, pivy = ((int)spr->anchor_y * h) >> 8;
+        picogame_blit_bitmap_affine(buf, bw, bh, clip_x, clip_y, spr->bitmap,
+            (spr->x >> 8) + vx, (spr->y >> 8) + vy, pivx, pivy,
+            spr->frame, fx, fy, spr->scale, spr->angle, fxp);
+    }
+}
+
+void picogame_blit_strip_layers(
+    uint16_t *buf, int region_w, int strip_top, int strip_h, int x0,
+    mp_obj_t *items, uint8_t *kinds, size_t n, uint16_t background, int ox, int oy) {
+    int npix = region_w * strip_h;
+    if (background == 0) {
+        memset(buf, 0, (size_t)npix * 2);            // common case (black/clear) -> fast bulk clear
+    } else {
+        // word-fill: two packed pixels per uint32 (half the stores). The strip buffer is a
+        // GC-allocated buffer (>=4-byte aligned), so the cast is safe; -Wcast-align can't see that.
+        #pragma GCC diagnostic push
+        #pragma GCC diagnostic ignored "-Wcast-align"
+        uint32_t w = (uint32_t)background | ((uint32_t)background << 16);
+        uint32_t *w32 = (uint32_t *)buf;
+        #pragma GCC diagnostic pop
+        int nw = npix >> 1;
+        for (int i = 0; i < nw; i++) {
+            w32[i] = w;
+        }
+        if (npix & 1) {                              // odd tail pixel
+            buf[npix - 1] = background;
+        }
+    }
+    for (size_t i = 0; i < n; i++) {
+        uint8_t raw = (kinds != NULL) ? kinds[i] : PICOGAME_KIND_SPRITE;
+        uint8_t kind = raw & PICOGAME_KIND_MASK;
+        // Fixed (HUD) items are drawn in screen space -> no view offset.
+        int iox = (raw & PICOGAME_KIND_FIXED) ? 0 : ox;
+        int ioy = (raw & PICOGAME_KIND_FIXED) ? 0 : oy;
+        if (kind == PICOGAME_KIND_TILEMAP) {
+            picogame_blit_tilemap(buf, region_w, strip_top, strip_h, x0,
+                MP_OBJ_TO_PTR(items[i]), iox, ioy);
+        } else if (kind == PICOGAME_KIND_PARTICLES) {
+            picogame_blit_particles(buf, region_w, strip_top, strip_h, x0,
+                MP_OBJ_TO_PTR(items[i]), iox, ioy);
+        } else if (kind == PICOGAME_KIND_CANVAS) {
+            picogame_blit_canvas(buf, region_w, strip_top, strip_h, x0,
+                MP_OBJ_TO_PTR(items[i]), iox, ioy);
+        } else if (kind == PICOGAME_KIND_STRIPDRAW) {
+            // Immediate mode: hand the callback a view of the part of THIS strip that
+            // overlaps the layer's rect (so it can only paint within its rect - a
+            // full-view fill stays inside it). Skip strips the rect doesn't touch.
+            picogame_stripdraw_obj_t *sd = MP_OBJ_TO_PTR(items[i]);
+            int ry0 = sd->y, ry1 = sd->y + sd->h;
+            int s0 = strip_top > ry0 ? strip_top : ry0;       // first screen row to draw
+            int st_end = strip_top + strip_h;
+            int s1 = st_end < ry1 ? st_end : ry1;             // one past last screen row
+            if (s0 >= s1) {
+                continue;                                      // strip is outside the layer
+            }
+            picogame_canvas_obj_t *v = MP_OBJ_TO_PTR(sd->view);
+            v->data = buf + (s0 - strip_top) * region_w;      // view row 0 == screen row s0
+            v->w = region_w;
+            v->h = s1 - s0;
+            v->x = 0;
+            v->y = 0;
+            v->has_transparent = false;
+            mp_obj_t cbargs[5] = {
+                sd->view,
+                MP_OBJ_NEW_SMALL_INT(x0),
+                MP_OBJ_NEW_SMALL_INT(s0),
+                MP_OBJ_NEW_SMALL_INT(region_w),
+                MP_OBJ_NEW_SMALL_INT(s1 - s0),
+            };
+            // We're inside an open display bus transaction here, so a raised
+            // exception must NOT unwind past it (that would wedge the bus / leave a
+            // DMA running). Catch it, keep the transaction intact, and latch so the
+            // traceback prints once instead of every strip every frame.
+            nlr_buf_t nlr;
+            if (nlr_push(&nlr) == 0) {
+                mp_call_function_n_kw(sd->callback, 5, 0, cbargs);
+                nlr_pop();
+            } else {
+                if (!sd->faulted) {
+                    sd->faulted = true;
+                    mp_obj_print_exception(&mp_plat_print, MP_OBJ_FROM_PTR(nlr.ret_val));
+                }
+            }
+        } else {
+            picogame_sprite_obj_t *spr = MP_OBJ_TO_PTR(items[i]);
+            if (!(spr->flags & PICOGAME_SPR_VISIBLE)) {
+                continue;
+            }
+            blit_sprite(buf, region_w, strip_h, x0, strip_top, spr, iox, ioy);
+        }
+    }
+}
+
+bool picogame_strip_begin(
+    busdisplay_busdisplay_obj_t *display,
+    int *x0p, int *y0p, int *x1p, int *y1p, size_t buffer_pixels,
+    int *region_w, int *strip_h) {
+    // Clamp the window to the panel (post-rotation w/h): an out-of-range region makes the controller
+    // wrap/garble rows. Callers usually pass clamped dirty rects, but StripDraw / direct render_region
+    // can hand us a rect that runs off the panel. Clamp AND write back through the pointers so the
+    // caller's strip loop + blit origin use the SAME clamped bounds (else only the GRAM window is
+    // clamped while the data loop still pushes off-panel rows -> the wrap/garble we're preventing).
+    int pw = display->core.width, ph = display->core.height;
+    int x0 = *x0p, y0 = *y0p, x1 = *x1p, y1 = *y1p;
+    if (x0 < 0) {
+        x0 = 0;
+    }
+    if (y0 < 0) {
+        y0 = 0;
+    }
+    if (x1 > pw) {
+        x1 = pw;
+    }
+    if (y1 > ph) {
+        y1 = ph;
+    }
+    *x0p = x0;
+    *y0p = y0;
+    *x1p = x1;
+    *y1p = y1;
+    int rw = x1 - x0;
+    int rh = y1 - y0;
+    if (rw <= 0 || rh <= 0) {
+        return false;
+    }
+    int sh = (int)(buffer_pixels / (size_t)rw);
+    if (sh < 1) {
+        mp_raise_ValueError(MP_ERROR_TEXT("region buffer too small"));
+    }
+    if (sh > rh) {
+        sh = rh;
+    }
+
+    displayio_area_t area;
+    area.x1 = x0;
+    area.y1 = y0;
+    area.x2 = x1;
+    area.y2 = y1;
+    area.next = NULL;
+    displayio_display_bus_set_region_to_update(&display->bus, &display->core, &area);
+
+    while (!displayio_display_bus_begin_transaction(&display->bus)) {
+        RUN_BACKGROUND_TASKS;
+    }
+    display->bus.send(display->bus.bus, DISPLAY_COMMAND,
+        CHIP_SELECT_TOGGLE_EVERY_BYTE, &display->write_ram_command, 1);
+
+    *region_w = rw;
+    *strip_h = sh;
+    return true;
+}
+
+void picogame_render_region(
+    busdisplay_busdisplay_obj_t *display,
+    mp_obj_t *items, uint8_t *kinds, size_t n,
+    uint16_t *buffer, size_t buffer_pixels,
+    int16_t x0, int16_t y0, int16_t x1, int16_t y1,
+    uint16_t background, int ox, int oy) {
+
+    int region_w, strip_h;
+    int cx0 = x0, cy0 = y0, cx1 = x1, cy1 = y1;   // strip_begin clamps these to the panel in place
+    if (!picogame_strip_begin(display, &cx0, &cy0, &cx1, &cy1, buffer_pixels, &region_w, &strip_h)) {
+        return;
+    }
+    for (int sy = cy0; sy < cy1; sy += strip_h) {
+        int sh = picogame_imin(strip_h, cy1 - sy);
+        picogame_blit_strip_layers(buffer, region_w, sy, sh, cx0, items, kinds, n, background, ox, oy);
+        display->bus.send(display->bus.bus, DISPLAY_DATA,
+            CHIP_SELECT_UNTOUCHED, (uint8_t *)buffer, region_w * sh * 2);
+    }
+    displayio_display_bus_end_transaction(&display->bus);
+}
+
+// Toggle the panel's hardware colour inversion (INVON 0x21 / INVOFF 0x20). Instant, sends NO
+// pixel data - a brief invert is a free full-screen "flash" (a 1-bit negative hit look).
+void picogame_set_invert(busdisplay_busdisplay_obj_t *display, bool on) {
+    uint8_t cmd = on ? 0x21 : 0x20;
+    while (!displayio_display_bus_begin_transaction(&display->bus)) {
+        RUN_BACKGROUND_TASKS;
+    }
+    display->bus.send(display->bus.bus, DISPLAY_COMMAND, CHIP_SELECT_TOGGLE_EVERY_BYTE, &cmd, 1);
+    displayio_display_bus_end_transaction(&display->bus);
+}
+
+#if CIRCUITPY_PICOGAME_RGB444
+// The RGB444 machinery (this + pack_rgb444 + the Display rgb444 path) is compiled in ONLY when a
+// board sets CIRCUITPY_PICOGAME_RGB444=1. It is a transfer-bound-only win (on a CPU-balanced panel
+// like the PicoPad's the pack ~= the SPI byte saving, so it loses); default off (port ?= 0) until
+// multi-platform experience justifies flipping the default. See pack_rgb444's measured-optimal note.
+// Set the panel pixel format (COLMOD 0x3A): rgb444 -> 12-bit RGB444 (0x53), else 16-bit RGB565
+// (0x55). Asserting it on every Display construct also recovers from a previous program that left
+// the panel in the other format (survives soft reset).
+void picogame_set_pixel_format(busdisplay_busdisplay_obj_t *display, bool rgb444) {
+    uint8_t cmd = 0x3A;
+    uint8_t param = rgb444 ? 0x53 : 0x55;
+    while (!displayio_display_bus_begin_transaction(&display->bus)) {
+        RUN_BACKGROUND_TASKS;
+    }
+    display->bus.send(display->bus.bus, DISPLAY_COMMAND, CHIP_SELECT_TOGGLE_EVERY_BYTE, &cmd, 1);
+    display->bus.send(display->bus.bus, DISPLAY_DATA, CHIP_SELECT_UNTOUCHED, &param, 1);
+    displayio_display_bus_end_transaction(&display->bus);
+}
+
+// Pack a strip of `npix` (must be even) WIRE-order RGB565 pixels IN-PLACE to ST7789 12-bit RGB444
+// (2 px -> 3 bytes): R0G0 / B0R1 / G1B1. Returns the packed byte count. Cuts SPI traffic ~25%.
+// In-place is safe: the write offset (1.5*i) always trails the read offset (2*i).
+size_t picogame_pack_rgb444(uint16_t *buf, size_t npix) {
+    // Pack wire RGB565 -> ST7789 12-bit RGB444 (2 px -> 3 bytes) in place; the write offset (1.5*i)
+    // always trails the read offset (2*i). NB: the byte-swap to native order is LOAD-BEARING, not
+    // waste - it nibble-aligns the channels so each extracts in ~2 ops; extracting straight from the
+    // wire value makes GREEN (split across the byte boundary) cost ~5 ops and is SLOWER on device
+    // (measured, M0+). Likewise do NOT wide-unroll (8 registers -> spills). This tight form is the
+    // measured-optimal pack; RGB444 still loses to RGB565 on a CPU-balanced panel (pack ~= the SPI
+    // byte saving), so it is a transfer-bound-only option (default off).
+    uint8_t *out = (uint8_t *)buf;
+    size_t o = 0;
+    for (size_t i = 0; i + 1 < npix; i += 2) {
+        uint32_t w0 = buf[i], w1 = buf[i + 1];
+        uint32_t n0 = (w0 >> 8) | (w0 << 8);          // wire -> native RGB565
+        uint32_t n1 = (w1 >> 8) | (w1 << 8);
+        uint8_t r0 = (n0 >> 12) & 0xF, g0 = (n0 >> 7) & 0xF, b0 = (n0 >> 1) & 0xF;
+        uint8_t r1 = (n1 >> 12) & 0xF, g1 = (n1 >> 7) & 0xF, b1 = (n1 >> 1) & 0xF;
+        out[o++] = (r0 << 4) | g0;
+        out[o++] = (b0 << 4) | r1;
+        out[o++] = (g1 << 4) | b1;
+    }
+    return o;
+}
+#endif // CIRCUITPY_PICOGAME_RGB444
+
+void picogame_render(
+    busdisplay_busdisplay_obj_t *display,
+    mp_obj_t *items, size_t n,
+    uint16_t *buffer, size_t buffer_pixels,
+    int16_t x0, int16_t y0, int16_t x1, int16_t y1,
+    uint16_t background) {
+    picogame_render_region(display, items, NULL, n, buffer, buffer_pixels,
+        x0, y0, x1, y1, background, 0, 0);
+}

@@ -1805,6 +1805,10 @@ msgstr ""
 msgid "Out-buffer elements must be <= 4 bytes long"
 msgstr ""
 
+#: shared-bindings/picogame/__init__.c
+msgid "PAL8 needs a palette"
+msgstr ""
+
 #: ports/stm/common-hal/pwmio/PWMOut.c
 msgid "PWM restart"
 msgstr ""
@@ -2606,6 +2610,10 @@ msgstr ""
 msgid "already playing"
 msgstr ""
 
+#: shared-bindings/picogame/__init__.c
+msgid "anchor must be (x, y)"
+msgstr ""
+
 #: py/compile.c
 msgid "annotation must be an identifier"
 msgstr ""
@@ -2728,6 +2736,10 @@ msgstr ""
 msgid "bitmap sizes must match"
 msgstr ""
 
+#: shared-bindings/picogame/__init__.c
+msgid "bitmap too large"
+msgstr ""
+
 #: extmod/modrandom.c
 msgid "bits must be 32 or less"
 msgstr ""
@@ -2765,7 +2777,8 @@ msgstr ""
 msgid "buffer slices must be of equal length"
 msgstr ""
 
-#: py/modstruct.c shared-module/struct/__init__.c
+#: py/modstruct.c shared-bindings/picogame/Canvas.c
+#: shared-module/struct/__init__.c
 msgid "buffer too small"
 msgstr ""
 
@@ -3015,6 +3028,10 @@ msgstr ""
 msgid "code outside range 0~127"
 msgstr ""
 
+#: shared-bindings/picogame/__init__.c
+msgid "collide takes 6 or 8 args"
+msgstr ""
+
 #: shared-bindings/displayio/Palette.c
 msgid "color buffer must be 3 bytes (RGB) or 4 bytes (RGB + pad byte)"
 msgstr ""
@@ -3077,6 +3094,10 @@ msgstr ""
 
 #: extmod/ulab/code/numpy/numerical.c
 msgid "cross is defined for 1D arrays of length 3"
+msgstr ""
+
+#: shared-bindings/picogame/__init__.c
+msgid "data buffer too small"
 msgstr ""
 
 #: extmod/ulab/code/scipy/optimize/optimize.c
@@ -3194,6 +3215,18 @@ msgstr ""
 msgid "expected ':' after format specifier"
 msgstr ""
 
+#: shared-bindings/picogame/Display.c shared-bindings/picogame/__init__.c
+msgid "expected a BusDisplay"
+msgstr ""
+
+#: shared-bindings/picogame/Scene.c
+msgid "expected a Display"
+msgstr ""
+
+#: shared-bindings/picogame/Scene.c
+msgid "expected a Sprite, Tilemap, Particles, Canvas or StripDraw"
+msgstr ""
+
 #: py/obj.c
 msgid "expected tuple/list"
 msgstr ""
@@ -3224,6 +3257,11 @@ msgstr ""
 
 #: py/argcheck.c
 msgid "extra positional arguments given"
+msgstr ""
+
+#: ports/espressif/common-hal/picogame/Display.c
+#: ports/raspberrypi/common-hal/picogame/Display.c
+msgid "fast Display needs a FourWire SPI display"
 msgstr ""
 
 #: shared-bindings/audiocore/WaveFile.c shared-bindings/audiomp3/MP3Decoder.c
@@ -3547,6 +3585,10 @@ msgstr ""
 
 #: shared-bindings/traceback/__init__.c
 msgid "invalid exception"
+msgstr ""
+
+#: shared-bindings/picogame/__init__.c
+msgid "invalid format"
 msgstr ""
 
 #: py/objstr.c
@@ -4087,6 +4129,10 @@ msgstr ""
 msgid "pack expected %d items for packing (got %d)"
 msgstr ""
 
+#: shared-bindings/picogame/__init__.c
+msgid "palette is empty"
+msgstr ""
+
 #: py/emitinlinerv32.c
 msgid "parameters must be registers in sequence a0 to a3"
 msgstr ""
@@ -4148,6 +4194,10 @@ msgstr ""
 msgid "regex too complex"
 msgstr ""
 
+#: shared-module/picogame/__init__.c
+msgid "region buffer too small"
+msgstr ""
+
 #: py/builtinimport.c
 msgid "relative import"
 msgstr ""
@@ -4171,6 +4221,14 @@ msgstr ""
 
 #: py/emitnative.c
 msgid "return expected '%q' but got '%q'"
+msgstr ""
+
+#: ports/espressif/common-hal/picogame/Display.c
+msgid "rgb444 fast Display not supported on this port yet"
+msgstr ""
+
+#: ports/raspberrypi/common-hal/picogame/Display.c
+msgid "rgb444 not built (CIRCUITPY_PICOGAME_RGB444=0)"
 msgstr ""
 
 #: shared-bindings/rgbmatrix/RGBMatrix.c
@@ -4198,6 +4256,10 @@ msgstr ""
 #: ports/atmel-samd/common-hal/audiobusio/PDMIn.c
 #: ports/raspberrypi/common-hal/audiobusio/PDMIn.c
 msgid "sampling rate out of range"
+msgstr ""
+
+#: shared-bindings/picogame/Scene.c
+msgid "scene full"
 msgstr ""
 
 #: py/modmicropython.c
@@ -4288,12 +4350,20 @@ msgstr ""
 msgid "splitting with sub-captures"
 msgstr ""
 
+#: shared-bindings/picogame/Display.c shared-bindings/picogame/__init__.c
+msgid "sprites must be Sprites"
+msgstr ""
+
 #: shared-bindings/random/__init__.c
 msgid "stop not reachable from start"
 msgstr ""
 
 #: py/stream.c shared-bindings/getpass/__init__.c
 msgid "stream operation not supported"
+msgstr ""
+
+#: shared-bindings/picogame/__init__.c
+msgid "stride too small"
 msgstr ""
 
 #: py/objarray.c py/objstr.c
