@@ -655,6 +655,89 @@ static mp_obj_t sprite_touch(mp_obj_t self_in) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_1(sprite_touch_obj, sprite_touch);
 
+// Fill (x1,y1,x2,y2) from a Sprite (its drawn aabb), a (x,y) point, or a (x1,y1,x2,y2) rect.
+static void pg_obj_to_box(mp_obj_t o, int *x1, int *y1, int *x2, int *y2) {
+    if (mp_obj_is_type(o, &picogame_sprite_type)) {
+        picogame_sprite_aabb(MP_OBJ_TO_PTR(o), x1, y1, x2, y2);
+        return;
+    }
+    if (mp_obj_is_type(o, &mp_type_tuple) || mp_obj_is_type(o, &mp_type_list)) {
+        size_t len;
+        mp_obj_t *items;
+        mp_obj_get_array(o, &len, &items);
+        if (len == 2) {                       // a point -> a zero-size box
+            *x1 = *x2 = mp_obj_get_int(items[0]);
+            *y1 = *y2 = mp_obj_get_int(items[1]);
+            return;
+        }
+        if (len == 4) {                       // a rect
+            *x1 = mp_obj_get_int(items[0]);
+            *y1 = mp_obj_get_int(items[1]);
+            *x2 = mp_obj_get_int(items[2]);
+            *y2 = mp_obj_get_int(items[3]);
+            return;
+        }
+    }
+    mp_raise_msg_varg(&mp_type_TypeError, MP_ERROR_TEXT("%q must be of type %q or %q, not %q"),
+        MP_QSTR_other, MP_QSTR_Sprite, MP_QSTR_tuple, mp_obj_get_type(o)->name);
+}
+
+//| def overlaps(self, other: "Sprite | tuple", inset: int = 0) -> bool:
+//|     """True if this sprite's drawn box overlaps `other` - an inclusive AABB, so they
+//|         collide the moment they touch. `other` may be another Sprite, a point `(x, y)`,
+//|         or a rect `(x1, y1, x2, y2)` (e.g. a trigger zone or the screen for culling).
+//|         The box is anchor/scale/rotation aware. `inset` shrinks THIS sprite's box by N px
+//|         on each side, for a fair hitbox smaller than the art."""
+//|     ...
+static mp_obj_t sprite_overlaps(size_t n_args, const mp_obj_t *pos_args, mp_map_t *kw_args) {
+    enum { ARG_other, ARG_inset };
+    static const mp_arg_t allowed[] = {
+        { MP_QSTR_other, MP_ARG_REQUIRED | MP_ARG_OBJ },
+        { MP_QSTR_inset, MP_ARG_INT, {.u_int = 0} },
+    };
+    mp_arg_val_t args[MP_ARRAY_SIZE(allowed)];
+    mp_arg_parse_all(n_args - 1, pos_args + 1, kw_args, MP_ARRAY_SIZE(allowed), allowed, args);
+    int ax1, ay1, ax2, ay2, bx1, by1, bx2, by2;
+    picogame_sprite_aabb(MP_OBJ_TO_PTR(pos_args[0]), &ax1, &ay1, &ax2, &ay2);
+    pg_obj_to_box(args[ARG_other].u_obj, &bx1, &by1, &bx2, &by2);
+    int in = args[ARG_inset].u_int;                        // inset shrinks the CALLER's box (kw or positional)
+    bool hit = ((ax1 + in) <= bx2) && ((ax2 - in) >= bx1) &&
+        ((ay1 + in) <= by2) && ((ay2 - in) >= by1);
+    return mp_obj_new_bool(hit);
+}
+static MP_DEFINE_CONST_FUN_OBJ_KW(sprite_overlaps_obj, 2, sprite_overlaps);
+
+//| def near(self, other: "Sprite | tuple", r: int) -> bool:
+//|     """True if this sprite's centre is within `r` pixels of `other`'s centre (squared
+//|         distance, no sqrt) - the round/forgiving test for bullets, pickups, explosions.
+//|         `other` may be a Sprite or a point `(x, y)`. Centres come from the drawn box, so
+//|         it is anchor aware."""
+//|     ...
+static mp_obj_t sprite_near(mp_obj_t self_in, mp_obj_t other_in, mp_obj_t r_in) {
+    int ax1, ay1, ax2, ay2;
+    picogame_sprite_aabb(MP_OBJ_TO_PTR(self_in), &ax1, &ay1, &ax2, &ay2);
+    int acx = (ax1 + ax2) / 2, acy = (ay1 + ay2) / 2, bcx, bcy;
+    if (mp_obj_is_type(other_in, &picogame_sprite_type)) {
+        int bx1, by1, bx2, by2;
+        picogame_sprite_aabb(MP_OBJ_TO_PTR(other_in), &bx1, &by1, &bx2, &by2);
+        bcx = (bx1 + bx2) / 2;
+        bcy = (by1 + by2) / 2;
+    } else {
+        size_t len;
+        mp_obj_t *items;
+        mp_obj_get_array(other_in, &len, &items);
+        if (len != 2) {
+            mp_raise_msg_varg(&mp_type_TypeError, MP_ERROR_TEXT("%q must be of type %q or %q, not %q"),
+                MP_QSTR_other, MP_QSTR_Sprite, MP_QSTR_tuple, mp_obj_get_type(other_in)->name);
+        }
+        bcx = mp_obj_get_int(items[0]);
+        bcy = mp_obj_get_int(items[1]);
+    }
+    mp_int_t r = mp_obj_get_int(r_in), dx = acx - bcx, dy = acy - bcy;
+    return mp_obj_new_bool(dx * dx + dy * dy < r * r);
+}
+static MP_DEFINE_CONST_FUN_OBJ_3(sprite_near_obj, sprite_near);
+
 static const mp_rom_map_elem_t picogame_sprite_locals_dict_table[] = {
     { MP_ROM_QSTR(MP_QSTR_x), MP_ROM_PTR(&sprite_x_obj) },
     { MP_ROM_QSTR(MP_QSTR_y), MP_ROM_PTR(&sprite_y_obj) },
@@ -674,6 +757,8 @@ static const mp_rom_map_elem_t picogame_sprite_locals_dict_table[] = {
     { MP_ROM_QSTR(MP_QSTR_data), MP_ROM_PTR(&sprite_data_obj) },
     { MP_ROM_QSTR(MP_QSTR_bitmap), MP_ROM_PTR(&sprite_bitmap_obj) },
     { MP_ROM_QSTR(MP_QSTR_anchor), MP_ROM_PTR(&sprite_anchor_obj) },
+    { MP_ROM_QSTR(MP_QSTR_overlaps), MP_ROM_PTR(&sprite_overlaps_obj) },
+    { MP_ROM_QSTR(MP_QSTR_near), MP_ROM_PTR(&sprite_near_obj) },
     { MP_ROM_QSTR(MP_QSTR_move), MP_ROM_PTR(&sprite_move_obj) },
     { MP_ROM_QSTR(MP_QSTR_touch), MP_ROM_PTR(&sprite_touch_obj) },
 };
