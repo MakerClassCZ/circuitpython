@@ -234,9 +234,9 @@ msgstr ""
 
 #: ports/raspberrypi/bindings/cyw43/__init__.c py/argcheck.c py/objexcept.c
 #: shared-bindings/bitmapfilter/__init__.c shared-bindings/canio/CAN.c
-#: shared-bindings/digitalio/Pull.c shared-bindings/supervisor/__init__.c
-#: shared-module/audiofilters/Filter.c shared-module/displayio/__init__.c
-#: shared-module/synthio/Synthesizer.c
+#: shared-bindings/digitalio/Pull.c shared-bindings/picogame/__init__.c
+#: shared-bindings/supervisor/__init__.c shared-module/audiofilters/Filter.c
+#: shared-module/displayio/__init__.c shared-module/synthio/Synthesizer.c
 msgid "%q must be of type %q or %q, not %q"
 msgstr ""
 
@@ -4202,6 +4202,10 @@ msgstr ""
 msgid "relative import"
 msgstr ""
 
+#: shared-bindings/picogame/__init__.c
+msgid "render items must be Sprite/StripDraw/Canvas/Tilemap/Particles"
+msgstr ""
+
 #: py/obj.c
 #, c-format
 msgid "requested length %d but object has length %d"
@@ -4350,7 +4354,7 @@ msgstr ""
 msgid "splitting with sub-captures"
 msgstr ""
 
-#: shared-bindings/picogame/Display.c shared-bindings/picogame/__init__.c
+#: shared-bindings/picogame/Display.c
 msgid "sprites must be Sprites"
 msgstr ""
 

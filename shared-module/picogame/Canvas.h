@@ -45,6 +45,8 @@ void picogame_canvas_ellipse(picogame_canvas_obj_t *cv, int cx, int cy, int rx, 
 void picogame_canvas_fill_ellipse(picogame_canvas_obj_t *cv, int cx, int cy, int rx, int ry, uint16_t color);
 void picogame_canvas_fill_round_rect(picogame_canvas_obj_t *cv, int x, int y, int w, int h, int r, uint16_t color);
 void picogame_canvas_frame3d(picogame_canvas_obj_t *cv, int x, int y, int w, int h, uint16_t light, uint16_t dark);
+void picogame_canvas_text(picogame_canvas_obj_t *cv, int x, int y, const char *text,
+    uint16_t fg, uint16_t bg, bool has_bg, const void *font);
 
 void picogame_blit_canvas(
     uint16_t *buf, int region_w, int strip_top, int strip_h, int x0,

@@ -37,8 +37,10 @@ typedef struct {
     mp_obj_base_t base;
     mp_obj_t callback;       // draw(view, vx, vy, vw, vh): vx/vy = screen origin of view (0,0)
     mp_obj_t view;           // a reused picogame_canvas_obj_t (data repointed each strip)
-    int32_t x, y, w, h;      // scene rect, always repainted (int32: scene coords, big-world safe)
+    int32_t x, y, w, h;      // scene rect (int32: scene coords, big-world safe)
     bool faulted;
+    bool always_dirty;       // True: repaint every frame (animated). False: only when pending (UI on-change).
+    bool pending;            // invalidate()d since last take_dirty -> repaint once (used when !always_dirty)
 } picogame_stripdraw_obj_t;
 
 static inline int picogame_imin(int a, int b) {

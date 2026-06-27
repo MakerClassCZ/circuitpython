@@ -6,6 +6,7 @@
 #include "py/objproperty.h"
 #include "shared-bindings/picogame/Canvas.h"
 #include "shared-bindings/picogame/Bitmap.h"
+#include "shared-bindings/fontio/BuiltinFont.h"
 #include "shared-module/picogame/Canvas.h"
 
 //| class Canvas:
@@ -197,6 +198,24 @@ static mp_obj_t canvas_frame3d(size_t n, const mp_obj_t *a) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(canvas_frame3d_obj, 7, 7, canvas_frame3d);
 
+//|     def text(self, x: int, y: int, s: str, fg: int, font: fontio.BuiltinFont, bg: int | None = None) -> None:
+//|         """Composite ``s`` into the surface in C, rasterizing each glyph from ``font`` on the fly -
+//|         no Python glyph cache, no per-call Bitmap/Sprite (zero retained text RAM, no fragmentation).
+//|         If ``bg`` is given the glyph background is filled too; otherwise it is transparent. Inside a
+//|         StripDraw callback the ``view`` is a Canvas pointing at the live strip, so ``view.text(...)``
+//|         draws immediate-mode HUD/screen text straight into the frame."""
+static mp_obj_t canvas_text(size_t n, const mp_obj_t *a) {
+    const char *s = mp_obj_str_get_str(a[3]);
+    mp_int_t fg = mp_obj_get_int(a[4]);
+    const void *font = MP_OBJ_TO_PTR(mp_arg_validate_type(a[5], &fontio_builtinfont_type, MP_QSTR_font));
+    bool has_bg = (n >= 7) && (a[6] != mp_const_none);
+    uint16_t bg = has_bg ? (uint16_t)mp_obj_get_int(a[6]) : 0;
+    picogame_canvas_text(cv_self(a[0]), mp_obj_get_int(a[1]), mp_obj_get_int(a[2]),
+        s, (uint16_t)fg, bg, has_bg, font);
+    return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(canvas_text_obj, 6, 7, canvas_text);
+
 //|     def move(self, x: int, y: int) -> None: ...
 static mp_obj_t canvas_move(mp_obj_t self_in, mp_obj_t x_in, mp_obj_t y_in) {
     picogame_canvas_obj_t *self = cv_self(self_in);
@@ -263,6 +282,7 @@ static const mp_rom_map_elem_t picogame_canvas_locals_dict_table[] = {
     { MP_ROM_QSTR(MP_QSTR_fill_ellipse), MP_ROM_PTR(&canvas_fill_ellipse_obj) },
     { MP_ROM_QSTR(MP_QSTR_fill_round_rect), MP_ROM_PTR(&canvas_fill_round_rect_obj) },
     { MP_ROM_QSTR(MP_QSTR_frame3d), MP_ROM_PTR(&canvas_frame3d_obj) },
+    { MP_ROM_QSTR(MP_QSTR_text), MP_ROM_PTR(&canvas_text_obj) },
     { MP_ROM_QSTR(MP_QSTR_move), MP_ROM_PTR(&canvas_move_obj) },
 };
 static MP_DEFINE_CONST_DICT(picogame_canvas_locals_dict, picogame_canvas_locals_dict_table);

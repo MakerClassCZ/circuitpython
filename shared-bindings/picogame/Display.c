@@ -61,7 +61,11 @@ static mp_obj_t picogame_display_make_new(const mp_obj_type_t *type, size_t n_ar
 //|     ) -> None:
 //|         """Render ``sprites`` into region [x0,x1) x [y0,y1) and push via async
 //|         DMA. ``buffer_a``/``buffer_b`` are two equal strip buffers used for
-//|         double buffering (each >= region_width*2 bytes)."""
+//|         double buffering (each >= region_width*2 bytes).
+//|
+//|         SPRITES ONLY (unlike module-level ``picogame.render()``, which also accepts
+//|         StripDraw/Canvas/Tilemap/Particles): this is the low-level double-buffered
+//|         sprite push. For mixed layer kinds use a ``Scene`` or ``picogame.render()``."""
 //|         ...
 static mp_obj_t picogame_display_render(size_t n_args, const mp_obj_t *pos_args, mp_map_t *kw_args) {
     enum { ARG_sprites, ARG_buffer_a, ARG_buffer_b, ARG_x0, ARG_y0, ARG_x1, ARG_y1, ARG_background };

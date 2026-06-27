@@ -5,6 +5,8 @@
 #include "shared-module/picogame/Canvas.h"
 #include "shared-module/picogame/Bitmap.h"
 #include "shared-module/picogame/__init__.h"
+#include "shared-module/fontio/BuiltinFont.h"
+#include "shared-bindings/displayio/Bitmap.h"
 
 // Thin wrappers over the shared int32 accumulator (dx1,dy1,dx2,dy2 are contiguous int32 at the
 // struct tail). See picogame_dirty_* in __init__.c.
@@ -308,4 +310,34 @@ void picogame_blit_canvas(
     bm.has_transparent = cv->has_transparent;
     picogame_blit_bitmap(buf, region_w, strip_h, x0, strip_top, &bm,
         cv->x + ox, cv->y + oy, 0, false, false, false, NULL);
+}
+
+// Composite a string's glyphs straight into the surface in C: rasterize each glyph from the
+// font's 1-bit atlas on the fly (no Python glyph cache, no per-call Bitmap/Sprite). Because the
+// StripDraw `view` is a Canvas pointing at the live strip buffer, view.text() draws immediate-mode
+// text into the frame with zero retained RAM - the same primitive serves retained Canvas screens.
+void picogame_canvas_text(picogame_canvas_obj_t *cv, int x, int y, const char *text,
+    uint16_t fg, uint16_t bg, bool has_bg, const void *font) {
+    const fontio_builtinfont_t *f = font;
+    displayio_bitmap_t *sheet = (displayio_bitmap_t *)f->bitmap;
+    int fw = f->width, fh = f->height;
+    int tpr = sheet->width / fw;            // glyph tiles per atlas row
+    int x0 = x;
+    for (const uint8_t *p = (const uint8_t *)text; *p; p++) {
+        uint8_t gi = fontio_builtinfont_get_glyph_index(f, *p);
+        if (gi != 0xff) {                   // 0xff = no glyph -> blank advance
+            int tx = (gi % tpr) * fw, ty = (gi / tpr) * fh;
+            for (int gy = 0; gy < fh; gy++) {
+                for (int gx = 0; gx < fw; gx++) {
+                    if (common_hal_displayio_bitmap_get_pixel(sheet, tx + gx, ty + gy)) {
+                        put(cv, x + gx, y + gy, fg);
+                    } else if (has_bg) {
+                        put(cv, x + gx, y + gy, bg);
+                    }
+                }
+            }
+        }
+        x += fw;
+    }
+    mark(cv, x0, y, x, y + fh);
 }

@@ -785,7 +785,14 @@ MP_DEFINE_CONST_OBJ_TYPE(
 //|     (vx, vy); (vw, vh) is the strip size. Draw only the rows in [vy, vy+vh) for
 //|     speed (anything outside the view is clipped anyway). The rect is repainted every
 //|     frame, so use it for animated / scanline content (pseudo-3D, gradients,
-//|     procedural backgrounds), not static art (use Canvas for that)."""
+//|     procedural backgrounds), not static art (use Canvas for that).
+//|
+//|     COORDINATE CONTRACT: ``vx`` is the RENDER REGION's origin (NOT this layer's x), and the
+//|     view spans the FULL region WIDTH (the layer's rect only gates which ROWS run). So draw at
+//|     ABSOLUTE screen coords minus (vx, vy), and fill only your own rect with ``fill_rect`` -
+//|     ``view.clear()`` fills the whole region width. (When you render a StripDraw via
+//|     ``picogame.render([sd], buf, x,y,x+w,y+h)`` the region == the rect, so vx == x.)
+//|     Text via ``Canvas.text`` is ASCII (the built-in font); non-ASCII has no glyph."""
 //|
 //|     def __init__(
 //|         self,
@@ -797,13 +804,14 @@ MP_DEFINE_CONST_OBJ_TYPE(
 //|     ) -> None: ...
 static mp_obj_t picogame_stripdraw_make_new(const mp_obj_type_t *type, size_t n_args,
     size_t n_kw, const mp_obj_t *all_args) {
-    enum { ARG_callback, ARG_x, ARG_y, ARG_width, ARG_height };
+    enum { ARG_callback, ARG_x, ARG_y, ARG_width, ARG_height, ARG_always_dirty };
     static const mp_arg_t allowed_args[] = {
         { MP_QSTR_callback, MP_ARG_REQUIRED | MP_ARG_OBJ },
         { MP_QSTR_x, MP_ARG_INT, {.u_int = 0} },
         { MP_QSTR_y, MP_ARG_INT, {.u_int = 0} },
         { MP_QSTR_width, MP_ARG_INT, {.u_int = 0} },
         { MP_QSTR_height, MP_ARG_INT, {.u_int = 0} },
+        { MP_QSTR_always_dirty, MP_ARG_BOOL | MP_ARG_KW_ONLY, {.u_bool = true} },
     };
     mp_arg_val_t args[MP_ARRAY_SIZE(allowed_args)];
     mp_arg_parse_all_kw_array(n_args, n_kw, all_args, MP_ARRAY_SIZE(allowed_args), allowed_args, args);
@@ -815,6 +823,8 @@ static mp_obj_t picogame_stripdraw_make_new(const mp_obj_type_t *type, size_t n_
     self->w = args[ARG_width].u_int;
     self->h = args[ARG_height].u_int;
     self->faulted = false;
+    self->always_dirty = args[ARG_always_dirty].u_bool;
+    self->pending = true;            // render once on first refresh even when always_dirty=False
     // A buffer-less Canvas reused as the per-strip drawing view: its `data` is
     // repointed at the live strip each blit, so no surface RAM is allocated here.
     picogame_canvas_obj_t *view = mp_obj_malloc(picogame_canvas_obj_t, &picogame_canvas_type);
@@ -882,11 +892,38 @@ static mp_obj_t sd_set_height(mp_obj_t self_in, mp_obj_t v) {
 static MP_DEFINE_CONST_FUN_OBJ_2(sd_set_height_obj, sd_set_height);
 MP_PROPERTY_GETSET(sd_height_obj, (mp_obj_t)&sd_get_height_obj, (mp_obj_t)&sd_set_height_obj);
 
+//|     always_dirty: bool
+//|     """True (default): repaint every frame - for animated content (pseudo-3D, gradients). False:
+//|     repaint only when ``invalidate()``d (or overlapped by another dirty layer) - for on-change UI,
+//|     so a static panel doesn't re-rasterize+re-push every frame. With False you MUST invalidate() on
+//|     every content/visibility change (it's invisible until you do)."""
+static mp_obj_t sd_get_always_dirty(mp_obj_t self_in) {
+    return mp_obj_new_bool(((picogame_stripdraw_obj_t *)MP_OBJ_TO_PTR(self_in))->always_dirty);
+}
+static MP_DEFINE_CONST_FUN_OBJ_1(sd_get_always_dirty_obj, sd_get_always_dirty);
+static mp_obj_t sd_set_always_dirty(mp_obj_t self_in, mp_obj_t v) {
+    ((picogame_stripdraw_obj_t *)MP_OBJ_TO_PTR(self_in))->always_dirty = mp_obj_is_true(v);
+    return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_2(sd_set_always_dirty_obj, sd_set_always_dirty);
+MP_PROPERTY_GETSET(sd_always_dirty_obj, (mp_obj_t)&sd_get_always_dirty_obj, (mp_obj_t)&sd_set_always_dirty_obj);
+
+//|     def invalidate(self) -> None:
+//|         """Mark dirty so the layer repaints on the next refresh. Only needed when
+//|         ``always_dirty=False`` (on-change UI) - call it when the content changes."""
+static mp_obj_t sd_invalidate(mp_obj_t self_in) {
+    ((picogame_stripdraw_obj_t *)MP_OBJ_TO_PTR(self_in))->pending = true;
+    return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_1(sd_invalidate_obj, sd_invalidate);
+
 static const mp_rom_map_elem_t picogame_stripdraw_locals_dict_table[] = {
     { MP_ROM_QSTR(MP_QSTR_x), MP_ROM_PTR(&sd_x_obj) },
     { MP_ROM_QSTR(MP_QSTR_y), MP_ROM_PTR(&sd_y_obj) },
     { MP_ROM_QSTR(MP_QSTR_width), MP_ROM_PTR(&sd_width_obj) },
     { MP_ROM_QSTR(MP_QSTR_height), MP_ROM_PTR(&sd_height_obj) },
+    { MP_ROM_QSTR(MP_QSTR_always_dirty), MP_ROM_PTR(&sd_always_dirty_obj) },
+    { MP_ROM_QSTR(MP_QSTR_invalidate), MP_ROM_PTR(&sd_invalidate_obj) },
 };
 static MP_DEFINE_CONST_DICT(picogame_stripdraw_locals_dict, picogame_stripdraw_locals_dict_table);
 
@@ -971,20 +1008,58 @@ static mp_obj_t picogame_render_fun(size_t n_args, const mp_obj_t *pos_args, mp_
     size_t n = 0;
     mp_obj_t *items;
     mp_obj_get_array(args[ARG_sprites].u_obj, &n, &items);
+
+    // Classify items into layer kinds. All-Sprite lists stay on the NULL-kinds fast path (no alloc -
+    // the common case). Any non-Sprite layer (StripDraw/Canvas/Tilemap/Particles) builds a small kinds
+    // array so immediate render uses the SAME multi-layer blitter the Scene does - e.g. a StripDraw
+    // composited straight into the strip with `view.text()` = 0-RAM immediate HUD / text screen.
+    uint8_t kbuf[16];
+    uint8_t *kinds = NULL;
     for (size_t i = 0; i < n; i++) {
         if (!mp_obj_is_type(items[i], &picogame_sprite_type)) {
-            mp_raise_TypeError(MP_ERROR_TEXT("sprites must be Sprites"));
+            kinds = (n <= MP_ARRAY_SIZE(kbuf)) ? kbuf : m_new(uint8_t, n);
+            break;
+        }
+    }
+    if (kinds != NULL) {
+        for (size_t i = 0; i < n; i++) {
+            mp_obj_t it = items[i];
+            if (mp_obj_is_type(it, &picogame_sprite_type)) {
+                kinds[i] = PICOGAME_KIND_SPRITE;
+            } else if (mp_obj_is_type(it, &picogame_stripdraw_type)) {
+                kinds[i] = PICOGAME_KIND_STRIPDRAW;
+            } else if (mp_obj_is_type(it, &picogame_canvas_type)) {
+                kinds[i] = PICOGAME_KIND_CANVAS;
+            } else if (mp_obj_is_type(it, &picogame_tilemap_type)) {
+                kinds[i] = PICOGAME_KIND_TILEMAP;
+            } else if (mp_obj_is_type(it, &picogame_particles_type)) {
+                kinds[i] = PICOGAME_KIND_PARTICLES;
+            } else {
+                if (n > MP_ARRAY_SIZE(kbuf)) {
+                    m_del(uint8_t, kinds, n);
+                }
+                mp_raise_TypeError(MP_ERROR_TEXT("render items must be Sprite/StripDraw/Canvas/Tilemap/Particles"));
+            }
         }
     }
 
     mp_buffer_info_t bufinfo;
     mp_get_buffer_raise(args[ARG_buffer].u_obj, &bufinfo, MP_BUFFER_WRITE);
 
-    // Pass the list's items directly; picogame_render treats them all as sprites.
-    picogame_render(display, items, n,
-        (uint16_t *)bufinfo.buf, bufinfo.len / 2,
-        args[ARG_x0].u_int, args[ARG_y0].u_int, args[ARG_x1].u_int, args[ARG_y1].u_int,
-        args[ARG_background].u_int);
+    if (kinds == NULL) {
+        picogame_render(display, items, n,
+            (uint16_t *)bufinfo.buf, bufinfo.len / 2,
+            args[ARG_x0].u_int, args[ARG_y0].u_int, args[ARG_x1].u_int, args[ARG_y1].u_int,
+            args[ARG_background].u_int);
+    } else {
+        picogame_render_region(display, items, kinds, n,
+            (uint16_t *)bufinfo.buf, bufinfo.len / 2,
+            args[ARG_x0].u_int, args[ARG_y0].u_int, args[ARG_x1].u_int, args[ARG_y1].u_int,
+            args[ARG_background].u_int, 0, 0);
+        if (n > MP_ARRAY_SIZE(kbuf)) {
+            m_del(uint8_t, kinds, n);
+        }
+    }
     return mp_const_none;
 }
 static MP_DEFINE_CONST_FUN_OBJ_KW(picogame_render_obj, 7, picogame_render_fun);
