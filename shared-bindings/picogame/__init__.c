@@ -1339,6 +1339,19 @@ static const mp_rom_map_elem_t picogame_module_globals_table[] = {
     #else
     { MP_ROM_QSTR(MP_QSTR_RGB444_SUPPORTED), MP_ROM_FALSE },
     #endif
+    // Build-time default render-strip height (rows). picogame_game.setup() uses it when strip_h is
+    // None; games can override per call; a board can override the default in mpconfigboard.h.
+    // MEASURED (RP2040): with async DMA double-buffering, SMALL strips overlap render+transfer best ->
+    // 8 is both fastest and least RAM (the two w*strip_h*2 buffers shrink). WITHOUT the DMA backend
+    // there's no overlap, so a blocking send per strip makes LARGER strips win -> 24.
+    #ifndef PICOGAME_STRIP_H
+    #if CIRCUITPY_PICOGAME_FAST_DISPLAY
+    #define PICOGAME_STRIP_H 8
+    #else
+    #define PICOGAME_STRIP_H 24
+    #endif
+    #endif
+    { MP_ROM_QSTR(MP_QSTR_STRIP_H), MP_ROM_INT(PICOGAME_STRIP_H) },
 };
 static MP_DEFINE_CONST_DICT(picogame_module_globals, picogame_module_globals_table);
 
