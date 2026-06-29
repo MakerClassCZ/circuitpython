@@ -531,9 +531,10 @@ static void blit_sprite(uint16_t *buf, int bw, int bh, int clip_x, int clip_y,
     }
 }
 
-void picogame_blit_strip_layers(
+mp_obj_t picogame_blit_strip_layers(
     uint16_t *buf, int region_w, int strip_top, int strip_h, int x0,
     mp_obj_t *items, uint8_t *kinds, size_t n, uint16_t background, int ox, int oy) {
+    mp_obj_t pending = MP_OBJ_NULL;               // a BaseException latched from a StripDraw callback
     int npix = region_w * strip_h;
     if (background == 0) {
         memset(buf, 0, (size_t)npix * 2);            // common case (black/clear) -> fast bulk clear
@@ -603,9 +604,18 @@ void picogame_blit_strip_layers(
                 mp_call_function_n_kw(sd->callback, 5, 0, cbargs);
                 nlr_pop();
             } else {
+                mp_obj_t exc = MP_OBJ_FROM_PTR(nlr.ret_val);
+                if (!mp_obj_is_subclass_fast(MP_OBJ_FROM_PTR(mp_obj_get_type(exc)),
+                        MP_OBJ_FROM_PTR(&mp_type_Exception))) {
+                    // A BaseException (KeyboardInterrupt / ReloadException / SystemExit) must reach the
+                    // supervisor - latch it and stop; the caller re-raises it once the display
+                    // transaction has safely closed, so Ctrl-C and USB auto-reload actually work.
+                    pending = exc;
+                    break;
+                }
                 if (!sd->faulted) {
                     sd->faulted = true;
-                    mp_obj_print_exception(&mp_plat_print, MP_OBJ_FROM_PTR(nlr.ret_val));
+                    mp_obj_print_exception(&mp_plat_print, exc);
                 }
             }
         } else {
@@ -616,6 +626,7 @@ void picogame_blit_strip_layers(
             blit_sprite(buf, region_w, strip_h, x0, strip_top, spr, iox, ioy);
         }
     }
+    return pending;
 }
 
 bool picogame_strip_begin(
@@ -691,9 +702,13 @@ void picogame_render_region(
     }
     for (int sy = cy0; sy < cy1; sy += strip_h) {
         int sh = picogame_imin(strip_h, cy1 - sy);
-        picogame_blit_strip_layers(buffer, region_w, sy, sh, cx0, items, kinds, n, background, ox, oy);
+        mp_obj_t exc = picogame_blit_strip_layers(buffer, region_w, sy, sh, cx0, items, kinds, n, background, ox, oy);
         display->bus.send(display->bus.bus, DISPLAY_DATA,
             CHIP_SELECT_UNTOUCHED, (uint8_t *)buffer, region_w * sh * 2);
+        if (exc != MP_OBJ_NULL) {                 // a StripDraw callback raised a BaseException: close the
+            displayio_display_bus_end_transaction(&display->bus);   // bus, then re-raise (Ctrl-C / reload)
+            nlr_raise(MP_OBJ_TO_PTR(exc));
+        }
     }
     displayio_display_bus_end_transaction(&display->bus);
 }

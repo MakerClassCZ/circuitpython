@@ -116,7 +116,9 @@ void picogame_blit_bitmap_affine(
 // order (items[0] = bottom). kinds[i] selects the type; kinds == NULL means
 // every item is a sprite. (ox, oy) is the view offset added to item positions
 // (scene space -> screen space) for camera/centering.
-void picogame_blit_strip_layers(
+// Returns a latched BaseException (Ctrl-C / ReloadException) raised by a StripDraw callback, or
+// MP_OBJ_NULL. The caller must re-raise it AFTER closing the display transaction.
+mp_obj_t picogame_blit_strip_layers(
     uint16_t *buf, int region_w, int strip_top, int strip_h, int x0,
     mp_obj_t *items, uint8_t *kinds, size_t n, uint16_t background, int ox, int oy);
 
