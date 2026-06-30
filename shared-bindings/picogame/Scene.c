@@ -68,8 +68,16 @@ static mp_obj_t picogame_scene_make_new(const mp_obj_type_t *type, size_t n_args
         fast = true;
     } else
     #endif
-    if (!mp_obj_is_type(disp, &busdisplay_busdisplay_type)) {
-        mp_raise_TypeError(MP_ERROR_TEXT("expected a Display"));
+    {
+        // Plain busdisplay path (no fast DMA backend, or one passed directly): accept a SUBCLASS
+        // too (e.g. adafruit_st7789.ST7789, a Python subclass of busdisplay.BusDisplay) by casting
+        // to its native base. Store the native object, since the portable renderer below treats
+        // self->display as a busdisplay_busdisplay_obj_t directly.
+        mp_obj_t native = mp_obj_cast_to_native_base(disp, &busdisplay_busdisplay_type);
+        if (!mp_obj_is_type(native, &busdisplay_busdisplay_type)) {
+            mp_raise_TypeError(MP_ERROR_TEXT("expected a Display"));
+        }
+        disp = native;
     }
     mp_buffer_info_t tmp;
     mp_get_buffer_raise(args[ARG_buffer_a].u_obj, &tmp, MP_BUFFER_WRITE);
