@@ -34,3 +34,8 @@ CFLAGS += \
 
 # Must be accompanied by a linker script change
 CFLAGS += -DCIRCUITPY_FIRMWARE_SIZE='(1536 * 1024)'
+
+# picogame custom-board build: native engine + fast DMA display backend. board.DISPLAY is
+# left empty here and built by boot.py from settings.toml (see picogame-custom_boards).
+CIRCUITPY_PICOGAME = 1
+CIRCUITPY_PICOGAME_FAST_DISPLAY = 1
