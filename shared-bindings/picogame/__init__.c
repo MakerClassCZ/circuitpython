@@ -1097,7 +1097,7 @@ static mp_obj_t picogame_collide(size_t n_args, const mp_obj_t *args) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(picogame_collide_obj, 6, 8, picogame_collide);
 
-// ---- procedural value-noise in C (matches lib/picogame_noise.py's algorithm) ----
+// ---- procedural value-noise in C (the desktop simulator sim/picogame.py mirrors it) ----
 // The CANONICAL implementation is FIXED-POINT (Q16.16 coords, Q0.16 values), exposed
 // under the plain names value2d/value1d/fbm2d/fbm1d (see further down). It benchmarked
 // ~1.8x faster than float on-device (0.649 s vs 1.186 s / 5000 fbm2d), so the float
@@ -1135,7 +1135,7 @@ static float pg_value1d(float x, int32_t seed) {
 }
 
 //| def value2d(x: float, y: float, *, seed: int = 0) -> float:
-//|     """Smooth 2-D value noise in 0..1 (fast C; same algorithm as picogame_noise)."""
+//|     """Smooth 2-D value noise in 0..1 (fast C)."""
 //|     ...
 static mp_obj_t picogame_value2d(size_t n_args, const mp_obj_t *pos, mp_map_t *kw) {
     static const mp_arg_t spec[] = { {MP_QSTR_x, MP_ARG_REQUIRED | MP_ARG_OBJ, {.u_obj = MP_OBJ_NULL}},
