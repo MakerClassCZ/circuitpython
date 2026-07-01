@@ -606,7 +606,7 @@ mp_obj_t picogame_blit_strip_layers(
             } else {
                 mp_obj_t exc = MP_OBJ_FROM_PTR(nlr.ret_val);
                 if (!mp_obj_is_subclass_fast(MP_OBJ_FROM_PTR(mp_obj_get_type(exc)),
-                        MP_OBJ_FROM_PTR(&mp_type_Exception))) {
+                    MP_OBJ_FROM_PTR(&mp_type_Exception))) {
                     // A BaseException (KeyboardInterrupt / ReloadException / SystemExit) must reach the
                     // supervisor - latch it and stop; the caller re-raises it once the display
                     // transaction has safely closed, so Ctrl-C and USB auto-reload actually work.
