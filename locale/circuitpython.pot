@@ -4211,10 +4211,6 @@ msgstr ""
 msgid "rgb444 fast Display not supported on this port yet"
 msgstr ""
 
-#: ports/raspberrypi/common-hal/picogame/Display.c
-msgid "rgb444 not built (CIRCUITPY_PICOGAME_RGB444=0)"
-msgstr ""
-
 #: shared-bindings/rgbmatrix/RGBMatrix.c
 #, c-format
 msgid "rgb_pins[%d] duplicates another pin assignment"

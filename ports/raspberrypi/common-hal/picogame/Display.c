@@ -27,7 +27,7 @@ void common_hal_picogame_display_construct(picogame_display_obj_t *self,
     self->rgb444 = rgb444;
     #else
     if (rgb444) {
-        mp_raise_NotImplementedError(MP_ERROR_TEXT("rgb444 not built (CIRCUITPY_PICOGAME_RGB444=0)"));
+        mp_raise_NotImplementedError(MP_ERROR_TEXT("Operation or feature not supported"));
     }
     self->rgb444 = false;
     #endif
