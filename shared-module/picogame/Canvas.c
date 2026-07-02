@@ -2,6 +2,8 @@
 //
 // SPDX-License-Identifier: MIT
 
+#include <string.h>
+
 #include "shared-module/picogame/Canvas.h"
 #include "shared-module/picogame/Bitmap.h"
 #include "shared-module/picogame/__init__.h"
@@ -51,11 +53,39 @@ static __attribute__((noinline)) void put(picogame_canvas_obj_t *cv, int x, int 
     }
 }
 
-void picogame_canvas_clear(picogame_canvas_obj_t *cv, uint16_t color) {
-    int n = cv->w * cv->h;
-    for (int i = 0; i < n; i++) {
-        cv->data[i] = color;
+// Fill `n` RGB565 pixels at `p` with `color`, word-filling two pixels per store (half the writes of
+// a 16-bit loop); memset for the common 0 case. Handles a leading odd (2-byte-but-not-4-byte) address
+// so it stays safe on Cortex-M0+ (RP2040), which faults on an unaligned 32-bit access - a StripDraw
+// view's rows into the render strip can start on an odd pixel. This is the per-frame path for
+// view.clear / Sky / HUD-bar / Fade fills, so the word-fill is worth it.
+static void fill565(uint16_t *p, int n, uint16_t color) {
+    if (n <= 0) {
+        return;
     }
+    if (color == 0) {
+        memset(p, 0, (size_t)n * 2);
+        return;
+    }
+    if ((uintptr_t)p & 3) {                    // align to 4 bytes: one leading pixel
+        *p++ = color;
+        n--;
+    }
+    uint32_t w = (uint32_t)color | ((uint32_t)color << 16);
+    #pragma GCC diagnostic push
+    #pragma GCC diagnostic ignored "-Wcast-align"
+    uint32_t *w32 = (uint32_t *)p;             // now 4-byte aligned
+    #pragma GCC diagnostic pop
+    int nw = n >> 1;
+    for (int i = 0; i < nw; i++) {
+        w32[i] = w;
+    }
+    if (n & 1) {                               // trailing odd pixel
+        p[n - 1] = color;
+    }
+}
+
+void picogame_canvas_clear(picogame_canvas_obj_t *cv, uint16_t color) {
+    fill565(cv->data, cv->w * cv->h, color);
     mark(cv, 0, 0, cv->w, cv->h);
 }
 
@@ -69,10 +99,7 @@ void picogame_canvas_fill_rect(picogame_canvas_obj_t *cv, int x, int y, int w, i
     int cx1 = x < 0 ? 0 : x, cy1 = y < 0 ? 0 : y;
     int cx2 = x2 > cv->w ? cv->w : x2, cy2 = y2 > cv->h ? cv->h : y2;
     for (int yy = cy1; yy < cy2; yy++) {
-        uint16_t *row = cv->data + yy * cv->w;
-        for (int xx = cx1; xx < cx2; xx++) {
-            row[xx] = color;
-        }
+        fill565(cv->data + yy * cv->w + cx1, cx2 - cx1, color);
     }
     mark(cv, x, y, x2, y2);
 }

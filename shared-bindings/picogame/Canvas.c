@@ -47,6 +47,9 @@ static mp_obj_t picogame_canvas_make_new(const mp_obj_type_t *type, size_t n_arg
         if (bi.len < (size_t)w * h * 2) {
             mp_raise_ValueError(MP_ERROR_TEXT("buffer too small"));
         }
+        if ((uintptr_t)bi.buf & 1) {    // odd byte address -> uint16 pixel stores fault on Cortex-M0+
+            mp_raise_ValueError(MP_ERROR_TEXT("buffer must be 2-byte aligned"));
+        }
         self->data = bi.buf;
         self->data_obj = args[ARG_buffer].u_obj;   // keep the backing object alive (GC-traced)
     } else {
