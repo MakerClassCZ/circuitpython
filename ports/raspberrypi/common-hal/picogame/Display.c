@@ -106,13 +106,18 @@ void common_hal_picogame_display_render(picogame_display_obj_t *self,
     const bool rgb444 = self->rgb444;        // hoist: invariant across all strips
     #endif
 
+    // A StripDraw callback may latch a BaseException (Ctrl-C / auto-reload). Like the portable
+    // picogame_render_region, we must re-raise it -- but only AFTER the in-flight DMA finishes and
+    // the bus transaction closes, so hold it here and propagate below (see the end of the function).
+    mp_obj_t pending = MP_OBJ_NULL;
+
     for (int sy = cy0; sy < cy1; sy += strip_h) {
         int sh = picogame_imin(strip_h, cy1 - sy);
         uint16_t *buf = bufs[cur];
 
         // Blit this strip. When a DMA is in flight it transfers the *other*
         // buffer, so this CPU work overlaps the SPI transfer.
-        picogame_blit_strip_layers(buf, region_w, sy, sh, cx0, items, kinds, n, background, ox, oy);
+        pending = picogame_blit_strip_layers(buf, region_w, sy, sh, cx0, items, kinds, n, background, ox, oy);
 
         // RGB444: pack the just-blitted RGB565 strip in place (2 px -> 3 bytes) before sending.
         // The pack overlaps the previous strip's DMA (we're transfer-bound), so it's ~free.
@@ -138,6 +143,9 @@ void common_hal_picogame_display_render(picogame_display_obj_t *self,
             dma_inflight = true;
         }
         cur ^= 1;
+        if (pending != MP_OBJ_NULL) {   // callback interrupted: this strip is queued, now stop + flush
+            break;
+        }
     }
 
     if (dma_inflight) {
@@ -147,4 +155,8 @@ void common_hal_picogame_display_render(picogame_display_obj_t *self,
         // wait for the last bytes to leave the shift register before releasing CS
     }
     displayio_display_bus_end_transaction(&display->bus);
+
+    if (pending != MP_OBJ_NULL) {        // bus now closed -> safe to re-raise (Ctrl-C / reload)
+        nlr_raise(MP_OBJ_TO_PTR(pending));
+    }
 }
