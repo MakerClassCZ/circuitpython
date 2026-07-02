@@ -75,7 +75,7 @@ static mp_obj_t picogame_scene_make_new(const mp_obj_type_t *type, size_t n_args
         // self->display as a busdisplay_busdisplay_obj_t directly.
         mp_obj_t native = mp_obj_cast_to_native_base(disp, &busdisplay_busdisplay_type);
         if (!mp_obj_is_type(native, &busdisplay_busdisplay_type)) {
-            mp_raise_TypeError(MP_ERROR_TEXT("expected a Display"));
+            mp_raise_TypeError(MP_ERROR_TEXT("expected a BusDisplay"));
         }
         disp = native;
     }

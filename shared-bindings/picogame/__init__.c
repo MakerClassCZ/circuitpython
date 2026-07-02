@@ -76,7 +76,7 @@ static mp_obj_t picogame_bitmap_make_new(const mp_obj_type_t *type, size_t n_arg
     mp_int_t frames = mp_arg_validate_int_range(args[ARG_frames].u_int, 1, 255, MP_QSTR_frames);
     mp_int_t format = args[ARG_format].u_int;
     if (format != PICOGAME_FMT_RGB565 && format != PICOGAME_FMT_PAL8) {
-        mp_raise_ValueError(MP_ERROR_TEXT("invalid format"));
+        mp_raise_ValueError(MP_ERROR_TEXT("Invalid format"));
     }
     mp_int_t stride = args[ARG_stride].u_int;
     if (stride <= 0) {
@@ -113,7 +113,7 @@ static mp_obj_t picogame_bitmap_make_new(const mp_obj_type_t *type, size_t n_arg
     // size_t, letting a tiny buffer pass this check -> OOB read in the blitter. Compute + compare wide.
     uint64_t need = (uint64_t)stride * (uint64_t)height * (uint64_t)bpp;
     if ((uint64_t)data_info.len < need) {
-        mp_raise_ValueError(MP_ERROR_TEXT("data buffer too small"));
+        mp_raise_ValueError(MP_ERROR_TEXT("buffer too small"));
     }
     if (format == PICOGAME_FMT_PAL8 && pal_len < 2) {
         // Need >=1 entry so pal[0] is valid. Contract (see blitter): PAL8 indices MUST be < palette
@@ -1038,7 +1038,7 @@ static mp_obj_t picogame_render_fun(size_t n_args, const mp_obj_t *pos_args, mp_
                 if (n > MP_ARRAY_SIZE(kbuf)) {
                     m_del(uint8_t, kinds, n);
                 }
-                mp_raise_TypeError(MP_ERROR_TEXT("render items must be Sprite/StripDraw/Canvas/Tilemap/Particles"));
+                mp_raise_TypeError(MP_ERROR_TEXT("expected a Sprite, Tilemap, Particles, Canvas or StripDraw"));
             }
         }
     }

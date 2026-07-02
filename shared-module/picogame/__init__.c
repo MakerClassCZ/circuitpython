@@ -663,7 +663,7 @@ bool picogame_strip_begin(
     }
     int sh = (int)(buffer_pixels / (size_t)rw);
     if (sh < 1) {
-        mp_raise_ValueError(MP_ERROR_TEXT("region buffer too small"));
+        mp_raise_ValueError(MP_ERROR_TEXT("buffer too small"));
     }
     if (sh > rh) {
         sh = rh;

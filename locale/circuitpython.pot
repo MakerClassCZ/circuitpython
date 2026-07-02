@@ -3096,10 +3096,6 @@ msgstr ""
 msgid "cross is defined for 1D arrays of length 3"
 msgstr ""
 
-#: shared-bindings/picogame/__init__.c
-msgid "data buffer too small"
-msgstr ""
-
 #: extmod/ulab/code/scipy/optimize/optimize.c
 msgid "data must be iterable"
 msgstr ""
@@ -3217,10 +3213,6 @@ msgstr ""
 
 #: shared-bindings/picogame/Display.c shared-bindings/picogame/__init__.c
 msgid "expected a BusDisplay"
-msgstr ""
-
-#: shared-bindings/picogame/Scene.c
-msgid "expected a Display"
 msgstr ""
 
 #: shared-bindings/picogame/Scene.c
@@ -3585,10 +3577,6 @@ msgstr ""
 
 #: shared-bindings/traceback/__init__.c
 msgid "invalid exception"
-msgstr ""
-
-#: shared-bindings/picogame/__init__.c
-msgid "invalid format"
 msgstr ""
 
 #: py/objstr.c
@@ -4194,16 +4182,8 @@ msgstr ""
 msgid "regex too complex"
 msgstr ""
 
-#: shared-module/picogame/__init__.c
-msgid "region buffer too small"
-msgstr ""
-
 #: py/builtinimport.c
 msgid "relative import"
-msgstr ""
-
-#: shared-bindings/picogame/__init__.c
-msgid "render items must be Sprite/StripDraw/Canvas/Tilemap/Particles"
 msgstr ""
 
 #: py/obj.c
