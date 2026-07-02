@@ -2765,6 +2765,10 @@ msgstr ""
 msgid "buffer is smaller than requested size"
 msgstr ""
 
+#: shared-bindings/picogame/Canvas.c
+msgid "buffer must be 2-byte aligned"
+msgstr ""
+
 #: extmod/ulab/code/numpy/create.c extmod/ulab/code/utils/utils.c
 msgid "buffer size must be a multiple of element size"
 msgstr ""
