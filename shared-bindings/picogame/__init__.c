@@ -19,6 +19,7 @@
 #include "shared-bindings/picogame/Tilemap.h"
 #include "shared-bindings/picogame/Particles.h"
 #include "shared-bindings/picogame/Canvas.h"
+#include "shared-bindings/picogame/Framebuffer.h"
 #include "shared-module/picogame/__init__.h"
 #include "shared-module/picogame/Bitmap.h"
 #include "shared-module/picogame/Sprite.h"
@@ -1003,7 +1004,18 @@ static mp_obj_t picogame_render_fun(size_t n_args, const mp_obj_t *pos_args, mp_
     mp_arg_val_t args[MP_ARRAY_SIZE(allowed_args)];
     mp_arg_parse_all(n_args, pos_args, kw_args, MP_ARRAY_SIZE(allowed_args), allowed_args, args);
 
+    // Accept a picogame.Framebuffer (RAM scanout buffer) as the target too, when built
+    // in: immediate render composites straight into it (no strip buffer, no bus), so
+    // pg.render(board.DISPLAY, ...) works when board.DISPLAY is a Framebuffer - the HUD /
+    // HudBar / immediate-mode path on scanout-buffer platforms. Mirrors the Scene change.
+    #if CIRCUITPY_PICOGAME_FRAMEBUFFER
+    picogame_framebuffer_obj_t *fbt =
+        mp_obj_is_type(args[ARG_display].u_obj, &picogame_framebuffer_type)
+        ? MP_OBJ_TO_PTR(args[ARG_display].u_obj) : NULL;
+    busdisplay_busdisplay_obj_t *display = fbt ? NULL : pg_get_display(args[ARG_display].u_obj);
+    #else
     busdisplay_busdisplay_obj_t *display = pg_get_display(args[ARG_display].u_obj);
+    #endif
 
     size_t n = 0;
     mp_obj_t *items;
@@ -1042,6 +1054,24 @@ static mp_obj_t picogame_render_fun(size_t n_args, const mp_obj_t *pos_args, mp_
             }
         }
     }
+
+    #if CIRCUITPY_PICOGAME_FRAMEBUFFER
+    if (fbt != NULL) {
+        // Framebuffer target: composite the region straight into it (no strip buffer, no
+        // bus). Same compositor as the SPI path; re-raise a latched StripDraw exception.
+        mp_obj_t exc = picogame_render_framebuffer(fbt->fb, fbt->width, fbt->height,
+            items, kinds, n,
+            args[ARG_x0].u_int, args[ARG_y0].u_int, args[ARG_x1].u_int, args[ARG_y1].u_int,
+            args[ARG_background].u_int, 0, 0);
+        if (kinds != NULL && n > MP_ARRAY_SIZE(kbuf)) {
+            m_del(uint8_t, kinds, n);
+        }
+        if (exc != MP_OBJ_NULL) {
+            nlr_raise(MP_OBJ_TO_PTR(exc));
+        }
+        return mp_const_none;
+    }
+    #endif
 
     mp_buffer_info_t bufinfo;
     mp_get_buffer_raise(args[ARG_buffer].u_obj, &bufinfo, MP_BUFFER_WRITE);
@@ -1308,6 +1338,66 @@ static mp_obj_t picogame_fbm1d_fx(size_t n_args, const mp_obj_t *pos, mp_map_t *
 }
 static MP_DEFINE_CONST_FUN_OBJ_KW(picogame_fbm1d_fx_obj, 1, picogame_fbm1d_fx);
 
+#if CIRCUITPY_PICOGAME_FRAMEBUFFER
+// ---------------------------------------------------------------------------
+// Framebuffer  (a RAM render target used in place of a BusDisplay; scanout-buffer
+// platforms - WASM playground, desktop sim, FruitJam DVI/HSTX)
+// ---------------------------------------------------------------------------
+//| class Framebuffer:
+//|     """A RAM framebuffer render target (wire-order RGB565) that a Scene or
+//|     :py:func:`render` can draw into instead of a BusDisplay. ``buffer`` must be a
+//|     writable buffer of at least ``width*height*2`` bytes; the caller owns it (a
+//|     ``bytearray`` in the browser, the DVI scanout buffer on FruitJam)."""
+//|
+//|     def __init__(self, buffer: WriteableBuffer, width: int, height: int) -> None: ...
+static mp_obj_t picogame_framebuffer_make_new(const mp_obj_type_t *type, size_t n_args,
+    size_t n_kw, const mp_obj_t *all_args) {
+    mp_arg_check_num(n_args, n_kw, 3, 3, false);
+    mp_int_t width = mp_arg_validate_int_range(mp_obj_get_int(all_args[1]), 1, 4096, MP_QSTR_width);
+    mp_int_t height = mp_arg_validate_int_range(mp_obj_get_int(all_args[2]), 1, 4096, MP_QSTR_height);
+
+    mp_buffer_info_t bi;
+    mp_get_buffer_raise(all_args[0], &bi, MP_BUFFER_WRITE);
+    uint64_t need = (uint64_t)width * (uint64_t)height * 2u;
+    if ((uint64_t)bi.len < need) {
+        mp_raise_ValueError(MP_ERROR_TEXT("buffer too small"));
+    }
+
+    picogame_framebuffer_obj_t *self = mp_obj_malloc(picogame_framebuffer_obj_t, type);
+    self->buffer = all_args[0];
+    self->fb = (uint16_t *)bi.buf;
+    self->width = width;
+    self->height = height;
+    return MP_OBJ_FROM_PTR(self);
+}
+
+static mp_obj_t picogame_framebuffer_get_width(mp_obj_t self_in) {
+    return MP_OBJ_NEW_SMALL_INT(((picogame_framebuffer_obj_t *)MP_OBJ_TO_PTR(self_in))->width);
+}
+static MP_DEFINE_CONST_FUN_OBJ_1(picogame_framebuffer_get_width_obj, picogame_framebuffer_get_width);
+MP_PROPERTY_GETTER(picogame_framebuffer_width_obj, (mp_obj_t)&picogame_framebuffer_get_width_obj);
+
+static mp_obj_t picogame_framebuffer_get_height(mp_obj_t self_in) {
+    return MP_OBJ_NEW_SMALL_INT(((picogame_framebuffer_obj_t *)MP_OBJ_TO_PTR(self_in))->height);
+}
+static MP_DEFINE_CONST_FUN_OBJ_1(picogame_framebuffer_get_height_obj, picogame_framebuffer_get_height);
+MP_PROPERTY_GETTER(picogame_framebuffer_height_obj, (mp_obj_t)&picogame_framebuffer_get_height_obj);
+
+static const mp_rom_map_elem_t picogame_framebuffer_locals_dict_table[] = {
+    { MP_ROM_QSTR(MP_QSTR_width), MP_ROM_PTR(&picogame_framebuffer_width_obj) },
+    { MP_ROM_QSTR(MP_QSTR_height), MP_ROM_PTR(&picogame_framebuffer_height_obj) },
+};
+static MP_DEFINE_CONST_DICT(picogame_framebuffer_locals_dict, picogame_framebuffer_locals_dict_table);
+
+MP_DEFINE_CONST_OBJ_TYPE(
+    picogame_framebuffer_type,
+    MP_QSTR_Framebuffer,
+    MP_TYPE_FLAG_HAS_SPECIAL_ACCESSORS,
+    make_new, picogame_framebuffer_make_new,
+    locals_dict, &picogame_framebuffer_locals_dict
+    );
+#endif // CIRCUITPY_PICOGAME_FRAMEBUFFER
+
 static const mp_rom_map_elem_t picogame_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR___name__), MP_ROM_QSTR(MP_QSTR_picogame) },
     { MP_ROM_QSTR(MP_QSTR_Bitmap), MP_ROM_PTR(&picogame_bitmap_type) },
@@ -1320,6 +1410,9 @@ static const mp_rom_map_elem_t picogame_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR_Particles), MP_ROM_PTR(&picogame_particles_type) },
     { MP_ROM_QSTR(MP_QSTR_Canvas), MP_ROM_PTR(&picogame_canvas_type) },
     { MP_ROM_QSTR(MP_QSTR_StripDraw), MP_ROM_PTR(&picogame_stripdraw_type) },
+    #if CIRCUITPY_PICOGAME_FRAMEBUFFER
+    { MP_ROM_QSTR(MP_QSTR_Framebuffer), MP_ROM_PTR(&picogame_framebuffer_type) },
+    #endif
     { MP_ROM_QSTR(MP_QSTR_render), MP_ROM_PTR(&picogame_render_obj) },
     { MP_ROM_QSTR(MP_QSTR_invert), MP_ROM_PTR(&picogame_invert_obj) },
     { MP_ROM_QSTR(MP_QSTR_collide), MP_ROM_PTR(&picogame_collide_obj) },

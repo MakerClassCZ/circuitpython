@@ -779,3 +779,54 @@ void picogame_render(
     picogame_render_region(display, items, NULL, n, buffer, buffer_pixels,
         x0, y0, x1, y1, background, 0, 0);
 }
+
+#if CIRCUITPY_PICOGAME_FRAMEBUFFER
+// Full-frame RAM-framebuffer backend. Same layered compositor as the SPI strip path
+// (picogame_blit_strip_layers -> identical kinds dispatch, view offset, StripDraw),
+// but the destination is a caller-owned framebuffer instead of a bus window - no
+// transaction, no strip transfer. This is the shared render target for scanout-buffer
+// platforms (RP2350 DVI/HSTX, the desktop sim, the WASM playground): the framebuffer
+// IS the composite surface, so a region is composited straight into fb in place.
+//
+// fb        : destination, wire-order RGB565, fb_stride*fb_h pixels (caller-owned).
+// fb_stride : framebuffer row stride in pixels (>= x1); rows may be wider than x1.
+// items/kinds/n, background, ox/oy : the scene layer list, as picogame_render_region.
+// [x0,y0,x1,y1): the framebuffer region to (re)composite - a dirty rect, or the frame.
+// Bounds are clamped to [0,fb_stride) x [0,fb_h); an empty region is a no-op.
+// Returns a latched BaseException raised by a StripDraw callback (the caller re-raises
+// it), or MP_OBJ_NULL - the SAME contract as the strip path, minus the bus to close.
+mp_obj_t picogame_render_framebuffer(
+    uint16_t *fb, int fb_stride, int fb_h,
+    mp_obj_t *items, uint8_t *kinds, size_t n,
+    int x0, int y0, int x1, int y1,
+    uint16_t background, int ox, int oy) {
+    if (x0 < 0) {
+        x0 = 0;
+    }
+    if (y0 < 0) {
+        y0 = 0;
+    }
+    if (x1 > fb_stride) {
+        x1 = fb_stride;
+    }
+    if (y1 > fb_h) {
+        y1 = fb_h;
+    }
+    if (x1 <= x0 || y1 <= y0) {
+        return MP_OBJ_NULL;
+    }
+    int region_w = x1 - x0;
+    // One strip per row: point buf at (x0, sy) and composite that row span in place.
+    // The compositor takes region_w as its buffer width, so a single-row strip lands
+    // exactly at fb[sy*stride + x0 ..], leaving the rest of the wider row untouched.
+    for (int sy = y0; sy < y1; sy++) {
+        uint16_t *row = fb + (size_t)sy * (size_t)fb_stride + x0;
+        mp_obj_t exc = picogame_blit_strip_layers(
+            row, region_w, sy, 1, x0, items, kinds, n, background, ox, oy);
+        if (exc != MP_OBJ_NULL) {
+            return exc;   // StripDraw raised a BaseException; caller re-raises (no bus open)
+        }
+    }
+    return MP_OBJ_NULL;
+}
+#endif // CIRCUITPY_PICOGAME_FRAMEBUFFER

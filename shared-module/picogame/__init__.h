@@ -159,3 +159,30 @@ void picogame_render(
     uint16_t *buffer, size_t buffer_pixels,
     int16_t x0, int16_t y0, int16_t x1, int16_t y1,
     uint16_t background);
+
+#if CIRCUITPY_PICOGAME_FRAMEBUFFER
+// A render TARGET that is a caller-owned RAM framebuffer (wire-order RGB565), used in
+// place of a BusDisplay for scanout-buffer platforms: the WASM playground (heap
+// buffer read out to a canvas), the desktop sim, and FruitJam (the DVI/HSTX scanout
+// buffer). Holds a WriteableBuffer alive + a typed view of it; allocation is the
+// caller's (a bytearray in WASM, the DVI buffer memoryview on FruitJam), so the engine
+// stays platform-neutral. Scene / render can target this instead of a display.
+typedef struct {
+    mp_obj_base_t base;
+    mp_obj_t buffer;     // the backing WriteableBuffer (kept alive)
+    uint16_t *fb;        // typed view of buffer.buf: width*height wire-order RGB565 px
+    int width;
+    int height;
+} picogame_framebuffer_obj_t;
+
+// Full-frame RAM-framebuffer backend: same layered compositor as the SPI strip path
+// but composited straight into a caller-owned wire-order RGB565 framebuffer (no bus).
+// The shared render target for scanout-buffer platforms (RP2350 DVI/HSTX, sim, WASM).
+// [x0,y0,x1,y1) is the region to (re)composite (clamped to the framebuffer). Returns a
+// latched StripDraw BaseException for the caller to re-raise, or MP_OBJ_NULL.
+mp_obj_t picogame_render_framebuffer(
+    uint16_t *fb, int fb_stride, int fb_h,
+    mp_obj_t *items, uint8_t *kinds, size_t n,
+    int x0, int y0, int x1, int y1,
+    uint16_t background, int ox, int oy);
+#endif // CIRCUITPY_PICOGAME_FRAMEBUFFER

@@ -59,6 +59,11 @@ typedef struct {
     bool cleared;   // false until the first full-screen paint (covers stale pixels)
     bool fast;      // true: display is a fast picogame.Display (DMA); false: a plain
                     // busdisplay rendered via the portable bus.send fallback
+    #if CIRCUITPY_PICOGAME_FRAMEBUFFER
+    bool fb_target; // true: self->display is a picogame.Framebuffer (RAM scanout buffer);
+                    // refresh() composites dirty rects straight into it, no bus. Mutually
+                    // exclusive with `fast` and the busdisplay path.
+    #endif
     mp_obj_t dirty_rect;  // reusable [x1,y1,x2,y2] list returned by refresh() (no
                           // per-frame tuple allocation / GC churn)
 } picogame_scene_obj_t;

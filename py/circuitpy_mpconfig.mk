@@ -589,6 +589,12 @@ CFLAGS += -DCIRCUITPY_PICOGAME_FAST_DISPLAY=$(CIRCUITPY_PICOGAME_FAST_DISPLAY)
 # game can auto-enable Display(rgb444=...) only where it works. Default 0 (safe RGB565).
 CIRCUITPY_PICOGAME_RGB444 ?= 0
 CFLAGS += -DCIRCUITPY_PICOGAME_RGB444=$(CIRCUITPY_PICOGAME_RGB444)
+# Full-frame RAM-framebuffer render backend (picogame_render_framebuffer): for scanout-buffer
+# platforms that composite into a RAM framebuffer instead of an SPI strip bus (RP2350 DVI/HSTX
+# like the Adafruit Fruit Jam, the desktop sim, the WASM playground). Off by default so
+# flash-tight SPI-only boards (PicoPad) don't carry the unused function.
+CIRCUITPY_PICOGAME_FRAMEBUFFER ?= 0
+CFLAGS += -DCIRCUITPY_PICOGAME_FRAMEBUFFER=$(CIRCUITPY_PICOGAME_FRAMEBUFFER)
 
 CIRCUITPY_STATUS_BAR ?= 1
 CFLAGS += -DCIRCUITPY_STATUS_BAR=$(CIRCUITPY_STATUS_BAR)

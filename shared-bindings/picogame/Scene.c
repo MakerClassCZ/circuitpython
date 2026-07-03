@@ -12,6 +12,7 @@
 #include "shared-bindings/picogame/Tilemap.h"
 #include "shared-bindings/picogame/Particles.h"
 #include "shared-bindings/picogame/Canvas.h"
+#include "shared-bindings/picogame/Framebuffer.h"
 #include "shared-bindings/busdisplay/BusDisplay.h"
 #if CIRCUITPY_PICOGAME_FAST_DISPLAY
 #include "shared-bindings/picogame/Display.h"
@@ -27,6 +28,36 @@
 
 #define SCENE_INIT_CAP 8
 #define PICOGAME_MAX_DIRTY_RECTS 6   // separate regions repainted per refresh
+
+// Classify the `display` arg into a render backend and return the object Scene should
+// store: a fast picogame.Display (DMA), a picogame.Framebuffer (RAM scanout buffer, when
+// built in), or a plain busdisplay (portable bus.send). Sets *fast / *fb_target
+// accordingly; for a busdisplay it accepts a SUBCLASS (e.g. adafruit_st7789.ST7789) by
+// casting to its native base and returns that. Raises TypeError otherwise. This is where
+// the flag-gated type checks live, so the constructor body stays clean.
+static mp_obj_t scene_resolve_target(mp_obj_t disp, bool *fast, bool *fb_target) {
+    *fast = false;
+    *fb_target = false;
+    #if CIRCUITPY_PICOGAME_FAST_DISPLAY
+    if (mp_obj_is_type(disp, &picogame_display_type)) {
+        *fast = true;
+        return disp;
+    }
+    #endif
+    #if CIRCUITPY_PICOGAME_FRAMEBUFFER
+    if (mp_obj_is_type(disp, &picogame_framebuffer_type)) {
+        *fb_target = true;   // refresh() composites dirty rects straight into its RAM buffer
+        return disp;
+    }
+    #endif
+    // Plain busdisplay: accept a subclass by casting to its native base; the portable
+    // renderer treats self->display as a busdisplay_busdisplay_obj_t directly.
+    mp_obj_t native = mp_obj_cast_to_native_base(disp, &busdisplay_busdisplay_type);
+    if (!mp_obj_is_type(native, &busdisplay_busdisplay_type)) {
+        mp_raise_TypeError(MP_ERROR_TEXT("expected a BusDisplay"));
+    }
+    return native;
+}
 
 //| class Scene:
 //|     """Retained-mode scene with dirty-rectangle rendering. Add sprites and
@@ -59,33 +90,27 @@ static mp_obj_t picogame_scene_make_new(const mp_obj_type_t *type, size_t n_args
     mp_arg_val_t args[MP_ARRAY_SIZE(allowed_args)];
     mp_arg_parse_all_kw_array(n_args, n_kw, all_args, MP_ARRAY_SIZE(allowed_args), allowed_args, args);
 
-    // Accept either the fast picogame.Display (DMA, where available) or a plain
-    // busdisplay (rendered via the portable bus.send fallback -> cross-port).
-    mp_obj_t disp = args[ARG_display].u_obj;
-    bool fast = false;
-    #if CIRCUITPY_PICOGAME_FAST_DISPLAY
-    if (mp_obj_is_type(disp, &picogame_display_type)) {
-        fast = true;
-    } else
-    #endif
-    {
-        // Plain busdisplay path (no fast DMA backend, or one passed directly): accept a SUBCLASS
-        // too (e.g. adafruit_st7789.ST7789, a Python subclass of busdisplay.BusDisplay) by casting
-        // to its native base. Store the native object, since the portable renderer below treats
-        // self->display as a busdisplay_busdisplay_obj_t directly.
-        mp_obj_t native = mp_obj_cast_to_native_base(disp, &busdisplay_busdisplay_type);
-        if (!mp_obj_is_type(native, &busdisplay_busdisplay_type)) {
-            mp_raise_TypeError(MP_ERROR_TEXT("expected a BusDisplay"));
-        }
-        disp = native;
+    // Resolve the render backend (fast Display / Framebuffer / busdisplay) - all the
+    // flag-gated type checks are concentrated in scene_resolve_target().
+    bool fast, fb_target;
+    mp_obj_t disp = scene_resolve_target(args[ARG_display].u_obj, &fast, &fb_target);
+
+    // The framebuffer path composites directly into the target, so it needs no strip
+    // buffers; the SPI/DMA paths do. Validate them only when they'll be used. (When
+    // CIRCUITPY_PICOGAME_FRAMEBUFFER is off, fb_target is always false -> always validated,
+    // as before.)
+    if (!fb_target) {
+        mp_buffer_info_t tmp;
+        mp_get_buffer_raise(args[ARG_buffer_a].u_obj, &tmp, MP_BUFFER_WRITE);
+        mp_get_buffer_raise(args[ARG_buffer_b].u_obj, &tmp, MP_BUFFER_WRITE);
     }
-    mp_buffer_info_t tmp;
-    mp_get_buffer_raise(args[ARG_buffer_a].u_obj, &tmp, MP_BUFFER_WRITE);
-    mp_get_buffer_raise(args[ARG_buffer_b].u_obj, &tmp, MP_BUFFER_WRITE);
 
     picogame_scene_obj_t *self = mp_obj_malloc(picogame_scene_obj_t, type);
     self->display = disp;
     self->fast = fast;
+    #if CIRCUITPY_PICOGAME_FRAMEBUFFER
+    self->fb_target = fb_target;
+    #endif
     self->buf_a = args[ARG_buffer_a].u_obj;
     self->buf_b = args[ARG_buffer_b].u_obj;
     self->background = args[ARG_background].u_int;
@@ -271,36 +296,18 @@ static mp_obj_t picogame_scene_get_display(mp_obj_t self_in) {
 static MP_DEFINE_CONST_FUN_OBJ_1(picogame_scene_get_display_obj, picogame_scene_get_display);
 MP_PROPERTY_GETTER(picogame_scene_display_obj, (mp_obj_t)&picogame_scene_get_display_obj);
 
-//|     def refresh(self) -> Optional[list]:
-//|         """Diff against the previous frame and repaint only the changed region(s).
-//|         Returns the bounding dirty rect as a REUSED list [x1, y1, x2, y2] (read it
-//|         immediately; it's overwritten next call), or None if nothing changed."""
-//|         ...
-static mp_obj_t picogame_scene_refresh(mp_obj_t self_in) {
-    picogame_scene_obj_t *self = MP_OBJ_TO_PTR(self_in);
-
-    // Resolve the underlying busdisplay from either backend.
-    busdisplay_busdisplay_obj_t *bd;
-    #if CIRCUITPY_PICOGAME_FAST_DISPLAY
-    picogame_display_obj_t *disp = NULL;
-    if (self->fast) {
-        disp = MP_OBJ_TO_PTR(self->display);
-        bd = disp->display;
-    } else
-    #endif
-    {
-        bd = MP_OBJ_TO_PTR(self->display);
-    }
-    int w = bd->core.width;
-    int h = bd->core.height;
-
-    picogame_rect_t rects[PICOGAME_MAX_DIRTY_RECTS];
+// Compute the frame's dirty rectangles for a WxH target, clipped to the play rect
+// [left, w-right) x [top, h-bottom). On the first refresh (or after invalidate) this is
+// a single full-screen rect + a snapshot sync; afterwards it diffs against the previous
+// frame. Returns the rect count written to `rects` (0 = nothing to repaint).
+// Backend-agnostic, so the SPI/fast and framebuffer paths share the exact dirty logic.
+static int scene_collect_dirty_rects(picogame_scene_obj_t *self, int w, int h, picogame_rect_t *rects) {
     int nr;
     if (self->cleared) {
         nr = picogame_scene_compute_dirty_rects(self->items, self->kinds, self->snap,
             self->count, w, h, self->ox, self->oy, rects, PICOGAME_MAX_DIRTY_RECTS);
         if (nr == 0) {
-            return mp_const_none;
+            return 0;
         }
     } else {
         rects[0].x1 = 0;
@@ -333,7 +340,96 @@ static mp_obj_t picogame_scene_refresh(mp_obj_t self_in) {
         rects[kept].y2 = ry2;
         kept++;
     }
-    nr = kept;
+    return kept;
+}
+
+// Store the bounding union of `nr` rects into the reusable dirty_rect list (no per-frame
+// tuple allocation) and return it. Shared by both refresh backends.
+static mp_obj_t scene_store_dirty(picogame_scene_obj_t *self, const picogame_rect_t *rects, int nr, int w, int h) {
+    int ux1 = w, uy1 = h, ux2 = 0, uy2 = 0;
+    for (int i = 0; i < nr; i++) {
+        if (rects[i].x1 < ux1) {
+            ux1 = rects[i].x1;
+        }
+        if (rects[i].y1 < uy1) {
+            uy1 = rects[i].y1;
+        }
+        if (rects[i].x2 > ux2) {
+            ux2 = rects[i].x2;
+        }
+        if (rects[i].y2 > uy2) {
+            uy2 = rects[i].y2;
+        }
+    }
+    mp_obj_list_store(self->dirty_rect, MP_OBJ_NEW_SMALL_INT(0), MP_OBJ_NEW_SMALL_INT(ux1));
+    mp_obj_list_store(self->dirty_rect, MP_OBJ_NEW_SMALL_INT(1), MP_OBJ_NEW_SMALL_INT(uy1));
+    mp_obj_list_store(self->dirty_rect, MP_OBJ_NEW_SMALL_INT(2), MP_OBJ_NEW_SMALL_INT(ux2));
+    mp_obj_list_store(self->dirty_rect, MP_OBJ_NEW_SMALL_INT(3), MP_OBJ_NEW_SMALL_INT(uy2));
+    return self->dirty_rect;
+}
+
+#if CIRCUITPY_PICOGAME_FRAMEBUFFER
+// Retained-mode refresh against a RAM framebuffer target (scanout-buffer platforms:
+// WASM playground, desktop sim, FruitJam DVI/HSTX). Same dirty-rect logic as the SPI
+// path (via the shared helpers), but each rect is composited straight into the target
+// with picogame_render_framebuffer - no strip buffers, no bus transaction. A latched
+// StripDraw BaseException is re-raised (no bus to close). Self-contained here so
+// picogame_scene_refresh() keeps its original SPI/fast shape.
+static mp_obj_t scene_refresh_fb(picogame_scene_obj_t *self) {
+    picogame_framebuffer_obj_t *fbt = MP_OBJ_TO_PTR(self->display);
+    int w = fbt->width;
+    int h = fbt->height;
+
+    picogame_rect_t rects[PICOGAME_MAX_DIRTY_RECTS];
+    int nr = scene_collect_dirty_rects(self, w, h, rects);
+    if (nr == 0) {
+        return mp_const_none;
+    }
+
+    for (int i = 0; i < nr; i++) {
+        mp_obj_t exc = picogame_render_framebuffer(fbt->fb, fbt->width, fbt->height,
+            self->items, self->kinds, self->count,
+            rects[i].x1, rects[i].y1, rects[i].x2, rects[i].y2,
+            self->background, self->ox, self->oy);
+        if (exc != MP_OBJ_NULL) {
+            nlr_raise(MP_OBJ_TO_PTR(exc));
+        }
+    }
+    return scene_store_dirty(self, rects, nr, w, h);
+}
+#endif // CIRCUITPY_PICOGAME_FRAMEBUFFER
+
+//|     def refresh(self) -> Optional[list]:
+//|         """Diff against the previous frame and repaint only the changed region(s).
+//|         Returns the bounding dirty rect as a REUSED list [x1, y1, x2, y2] (read it
+//|         immediately; it's overwritten next call), or None if nothing changed."""
+//|         ...
+static mp_obj_t picogame_scene_refresh(mp_obj_t self_in) {
+    picogame_scene_obj_t *self = MP_OBJ_TO_PTR(self_in);
+
+    #if CIRCUITPY_PICOGAME_FRAMEBUFFER
+    if (self->fb_target) {
+        return scene_refresh_fb(self);
+    }
+    #endif
+
+    // Resolve the underlying busdisplay from either backend.
+    busdisplay_busdisplay_obj_t *bd;
+    #if CIRCUITPY_PICOGAME_FAST_DISPLAY
+    picogame_display_obj_t *disp = NULL;
+    if (self->fast) {
+        disp = MP_OBJ_TO_PTR(self->display);
+        bd = disp->display;
+    } else
+    #endif
+    {
+        bd = MP_OBJ_TO_PTR(self->display);
+    }
+    int w = bd->core.width;
+    int h = bd->core.height;
+
+    picogame_rect_t rects[PICOGAME_MAX_DIRTY_RECTS];
+    int nr = scene_collect_dirty_rects(self, w, h, rects);
     if (nr == 0) {
         return mp_const_none;
     }
@@ -347,7 +443,6 @@ static mp_obj_t picogame_scene_refresh(mp_obj_t self_in) {
 
     // Render each dirty rect independently; return their bounding union (kept for
     // the existing "dirty WxH" debug prints).
-    int ux1 = w, uy1 = h, ux2 = 0, uy2 = 0;
     for (int i = 0; i < nr; i++) {
         #if CIRCUITPY_PICOGAME_FAST_DISPLAY
         if (self->fast) {
@@ -364,26 +459,9 @@ static mp_obj_t picogame_scene_refresh(mp_obj_t self_in) {
                 rects[i].x1, rects[i].y1, rects[i].x2, rects[i].y2,
                 self->background, self->ox, self->oy);
         }
-        if (rects[i].x1 < ux1) {
-            ux1 = rects[i].x1;
-        }
-        if (rects[i].y1 < uy1) {
-            uy1 = rects[i].y1;
-        }
-        if (rects[i].x2 > ux2) {
-            ux2 = rects[i].x2;
-        }
-        if (rects[i].y2 > uy2) {
-            uy2 = rects[i].y2;
-        }
     }
 
-    // Update the reusable list in place - no per-frame tuple allocation.
-    mp_obj_list_store(self->dirty_rect, MP_OBJ_NEW_SMALL_INT(0), MP_OBJ_NEW_SMALL_INT(ux1));
-    mp_obj_list_store(self->dirty_rect, MP_OBJ_NEW_SMALL_INT(1), MP_OBJ_NEW_SMALL_INT(uy1));
-    mp_obj_list_store(self->dirty_rect, MP_OBJ_NEW_SMALL_INT(2), MP_OBJ_NEW_SMALL_INT(ux2));
-    mp_obj_list_store(self->dirty_rect, MP_OBJ_NEW_SMALL_INT(3), MP_OBJ_NEW_SMALL_INT(uy2));
-    return self->dirty_rect;
+    return scene_store_dirty(self, rects, nr, w, h);
 }
 static MP_DEFINE_CONST_FUN_OBJ_1(picogame_scene_refresh_obj, picogame_scene_refresh);
 
