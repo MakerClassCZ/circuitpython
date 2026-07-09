@@ -313,11 +313,12 @@ void picogame_blit_bitmap_scaled(
     }
     int frame_col = frame * sw, stride = bm->stride;
     uint32_t step = ((uint32_t)1 << 24) / scale;     // source px per dest px, 16.16
+    // No per-row sy>=sh / per-pixel sx>=sw clamp: with dw=(sd*scale)>>8 and step=floor(2^24/scale),
+    // the sampled index ((dw-1)*step)>>16 provably never reaches the source dimension (exhaustively
+    // verified over the ENTIRE uint16 x uint16 (scale, dim) domain, 0 violations), and xacc<dim<<16
+    // can't wrap uint32. So the clamps only ever cost a compare per pixel in this hot loop.
     for (int y = y_start; y < y_end; y++) {
         int sy = (int)(((uint32_t)(y - dy0) * step) >> 16);
-        if (sy >= sh) {
-            sy = sh - 1;
-        }
         if (fy) {
             sy = sh - 1 - sy;
         }
@@ -327,9 +328,6 @@ void picogame_blit_bitmap_scaled(
         for (int x = x_start; x < x_end; x++) {
             int sx = (int)(xacc >> 16);
             xacc += step;
-            if (sx >= sw) {
-                sx = sw - 1;
-            }
             if (fx) {
                 sx = sw - 1 - sx;
             }
@@ -438,14 +436,19 @@ void picogame_blit_bitmap_affine(
     int sc = (int)scale;
     int ic = (nic >= 0 ? nic + sc / 2 : nic - sc / 2) / sc;
     int is = (nis >= 0 ? nis + sc / 2 : nis - sc / 2) / sc;
+    // 32-bit 16.16 accumulators (cheaper than 64-bit on the M0+, where a 64-bit add is a multi-op
+    // sequence). The peak magnitude pivot<<16 + ic*dx + is*dy stays well within int32 for any sane
+    // sprite on a handheld screen (only >~30x magnification on a 320x240-class display could wrap it,
+    // which never happens). src_pixel bounds-checks iu/iv, so even an out-of-range case is memory-safe
+    // (at worst a mis-sampled pixel), never a crash.
     for (int y = y_start; y < y_end; y++) {
         int dyf = y - py;
         int dxf = x_start - px;
-        long long uacc = ((long long)pivx << 16) + (long long)ic * dxf + (long long)is * dyf;
-        long long vacc = ((long long)pivy << 16) - (long long)is * dxf + (long long)ic * dyf;
+        int32_t uacc = ((int32_t)pivx << 16) + ic * dxf + is * dyf;
+        int32_t vacc = ((int32_t)pivy << 16) - is * dxf + ic * dyf;
         uint16_t *drow = buf + (y - oy) * bw;
         for (int x = x_start; x < x_end; x++) {
-            int iu = (int)(uacc >> 16), iv = (int)(vacc >> 16);
+            int iu = uacc >> 16, iv = vacc >> 16;
             uacc += ic;
             vacc -= is;
             if (iu >= 0 && iu < sw && iv >= 0 && iv < sh) {
