@@ -709,7 +709,7 @@ msgstr ""
 #: ports/cxd56/common-hal/sdioio/SDCard.c
 #: ports/espressif/common-hal/sdioio/SDCard.c
 #: ports/stm/common-hal/sdioio/SDCard.c shared-bindings/floppyio/__init__.c
-#: shared-module/sdcardio/SDCard.c
+#: shared-bindings/picogame/Canvas.c shared-module/sdcardio/SDCard.c
 #, c-format
 msgid "Buffer must be a multiple of %d bytes"
 msgstr ""
@@ -1374,7 +1374,8 @@ msgstr ""
 msgid "Invalid data_pins[%d]"
 msgstr ""
 
-#: shared-module/msgpack/__init__.c supervisor/shared/settings.c
+#: shared-bindings/picogame/__init__.c shared-module/msgpack/__init__.c
+#: supervisor/shared/settings.c
 msgid "Invalid format"
 msgstr ""
 
@@ -1779,6 +1780,7 @@ msgid "Operation not permitted"
 msgstr ""
 
 #: ports/espressif/common-hal/espidf/__init__.c
+#: ports/raspberrypi/common-hal/picogame/Display.c
 msgid "Operation or feature not supported"
 msgstr ""
 
@@ -2778,6 +2780,7 @@ msgid "buffer slices must be of equal length"
 msgstr ""
 
 #: py/modstruct.c shared-bindings/picogame/Canvas.c
+#: shared-bindings/picogame/__init__.c shared-module/picogame/__init__.c
 #: shared-module/struct/__init__.c
 msgid "buffer too small"
 msgstr ""
@@ -3211,11 +3214,12 @@ msgstr ""
 msgid "expected ':' after format specifier"
 msgstr ""
 
-#: shared-bindings/picogame/Display.c shared-bindings/picogame/__init__.c
+#: shared-bindings/picogame/Display.c shared-bindings/picogame/Scene.c
+#: shared-bindings/picogame/__init__.c
 msgid "expected a BusDisplay"
 msgstr ""
 
-#: shared-bindings/picogame/Scene.c
+#: shared-bindings/picogame/Scene.c shared-bindings/picogame/__init__.c
 msgid "expected a Sprite, Tilemap, Particles, Canvas or StripDraw"
 msgstr ""
 
@@ -3626,6 +3630,10 @@ msgstr ""
 
 #: py/objtype.c
 msgid "issubclass() arg 2 must be a class or a tuple of classes"
+msgstr ""
+
+#: shared-bindings/picogame/Scene.c
+msgid "item not in scene"
 msgstr ""
 
 #: extmod/ulab/code/numpy/linalg/linalg.c

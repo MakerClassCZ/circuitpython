@@ -250,6 +250,33 @@ static mp_obj_t picogame_scene_add_all(mp_obj_t self_in, mp_obj_t iterable) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_2(picogame_scene_add_all_obj, picogame_scene_add_all);
 
+//|     def remove(self, item: Union[Sprite, Tilemap]) -> None:
+//|         """Remove a previously add()ed item (draw order of the rest is unchanged).
+//|         The next refresh repaints over where it was (a full repaint, like
+//|         :py:meth:`invalidate`), so it leaves no ghost. The item itself is untouched -
+//|         keep a reference and add() it again later to bring it back. Raises
+//|         ValueError if the item is not in the scene (e.g. already removed)."""
+//|         ...
+static mp_obj_t picogame_scene_remove(mp_obj_t self_in, mp_obj_t item_in) {
+    picogame_scene_obj_t *self = MP_OBJ_TO_PTR(self_in);
+    for (uint16_t i = 0; i < self->count; i++) {
+        if (self->items[i] != item_in) {
+            continue;
+        }
+        self->count--;
+        for (uint16_t j = i; j < self->count; j++) {   // keep draw order: shift the tail down
+            self->items[j] = self->items[j + 1];
+            self->kinds[j] = self->kinds[j + 1];
+            self->snap[j] = self->snap[j + 1];
+        }
+        self->items[self->count] = mp_const_none;   // release the GC reference
+        self->cleared = false;   // full repaint next refresh: background covers where it was
+        return mp_const_none;
+    }
+    mp_raise_ValueError(MP_ERROR_TEXT("item not in scene"));
+}
+static MP_DEFINE_CONST_FUN_OBJ_2(picogame_scene_remove_obj, picogame_scene_remove);
+
 //|     def invalidate(self) -> None:
 //|         """Force a full-screen repaint on the next refresh (e.g. on scene change)."""
 //|         ...
@@ -468,6 +495,7 @@ static MP_DEFINE_CONST_FUN_OBJ_1(picogame_scene_refresh_obj, picogame_scene_refr
 static const mp_rom_map_elem_t picogame_scene_locals_dict_table[] = {
     { MP_ROM_QSTR(MP_QSTR_add), MP_ROM_PTR(&picogame_scene_add_obj) },
     { MP_ROM_QSTR(MP_QSTR_add_all), MP_ROM_PTR(&picogame_scene_add_all_obj) },
+    { MP_ROM_QSTR(MP_QSTR_remove), MP_ROM_PTR(&picogame_scene_remove_obj) },
     { MP_ROM_QSTR(MP_QSTR_refresh), MP_ROM_PTR(&picogame_scene_refresh_obj) },
     { MP_ROM_QSTR(MP_QSTR_invalidate), MP_ROM_PTR(&picogame_scene_invalidate_obj) },
     { MP_ROM_QSTR(MP_QSTR_set_view), MP_ROM_PTR(&picogame_scene_set_view_obj) },
