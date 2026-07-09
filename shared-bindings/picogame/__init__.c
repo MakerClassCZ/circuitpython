@@ -1439,6 +1439,9 @@ MP_DEFINE_CONST_OBJ_TYPE(
 #include "extmod/vfs.h"
 #include "extmod/vfs_rom.h"
 #include "py/objarray.h"
+#include "py/stream.h"
+#include "py/mperrno.h"
+#include "supervisor/shared/tick.h"
 
 // Valid ROMFS image at the region base? (header magic per extmod/vfs_rom.c)
 static bool picogame_romfs_present(void) {
@@ -1492,6 +1495,78 @@ static mp_obj_t picogame_romfs_mount(mp_obj_t path_in) {
     return vfsrom;
 }
 static MP_DEFINE_CONST_FUN_OBJ_1(picogame_romfs_mount_obj, picogame_romfs_mount);
+//| def romfs_program(path: str) -> int:
+//|     """Program the asset region from a ROMFS image file (e.g. copied onto CIRCUITPY or the
+//|     SD card) and return the image size written. The file is read through the filesystem, so
+//|     source fragmentation is fine; each sector is erased, written and readback-verified.
+//|     Raises ValueError on a non-ROMFS file (checked before anything is erased),
+//|     OSError(EFBIG) when the image exceeds the region, OSError(EBUSY) while a ROMFS is
+//|     mounted (reboot/unmount first - reads through it would go stale), OSError(EIO) on a
+//|     verify mismatch. A power loss mid-program only affects the asset region: firmware and
+//|     the CIRCUITPY drive are untouched, and the next boot sees no valid image (re-run)."""
+//|     ...
+static mp_obj_t picogame_romfs_program(mp_obj_t path_in) {
+    // Refuse while any VfsRom is mounted: its buffer points into the region being rewritten.
+    for (mp_vfs_mount_t *vfs = MP_STATE_VM(vfs_mount_table); vfs != NULL; vfs = vfs->next) {
+        if (mp_obj_is_type(vfs->obj, &mp_type_vfs_rom)) {
+            mp_raise_OSError(MP_EBUSY);
+        }
+    }
+    mp_obj_t open_args[2] = { path_in, MP_OBJ_NEW_QSTR(MP_QSTR_rb) };
+    mp_obj_t file = mp_vfs_open(2, open_args, (mp_map_t *)&mp_const_empty_map);
+    // Size first (seek end), so an oversized image is rejected BEFORE any erase.
+    mp_obj_t dest[4];
+    mp_load_method(file, MP_QSTR_seek, dest);
+    dest[2] = MP_OBJ_NEW_SMALL_INT(0);
+    dest[3] = MP_OBJ_NEW_SMALL_INT(2);
+    mp_int_t size = mp_obj_get_int(mp_call_method_n_kw(2, 0, dest));
+    mp_load_method(file, MP_QSTR_seek, dest);
+    dest[2] = MP_OBJ_NEW_SMALL_INT(0);
+    dest[3] = MP_OBJ_NEW_SMALL_INT(0);
+    mp_call_method_n_kw(2, 0, dest);
+    if (size > (mp_int_t)PICOGAME_ROMFS_LEN) {
+        mp_stream_close(file);
+        mp_raise_OSError(MP_EFBIG);
+    }
+    if (size < 4) {
+        mp_stream_close(file);
+        mp_raise_ValueError(MP_ERROR_TEXT("Invalid format"));
+    }
+    uint8_t *buf = m_new(uint8_t, PICOGAME_ROMFS_SECTOR);
+    uint32_t off = 0;                                    // sector-aligned region offset
+    uint32_t remaining = (uint32_t)size;
+    int errcode = 0;
+    while (remaining > 0) {
+        // Phase 1 (XIP active): pull the next chunk through the VFS into RAM.
+        mp_uint_t n = mp_stream_rw(file, buf, PICOGAME_ROMFS_SECTOR, &errcode, MP_STREAM_RW_READ);
+        if (errcode != 0 || n == 0) {
+            mp_stream_close(file);
+            mp_raise_OSError(errcode != 0 ? errcode : MP_EIO);
+        }
+        if (off == 0 &&
+            !(buf[0] == (0x80 | 'R') && buf[1] == (0x80 | 'M') && buf[2] == '1')) {
+            mp_stream_close(file);                       // not a ROMFS image; nothing erased yet
+            mp_raise_ValueError(MP_ERROR_TEXT("Invalid format"));
+        }
+        if (n < PICOGAME_ROMFS_SECTOR) {
+            memset(buf + n, 0xff, PICOGAME_ROMFS_SECTOR - n);   // erased-state tail
+        }
+        // Phase 2 (XIP suspended inside): erase + program this sector.
+        common_hal_picogame_romfs_write_sector(PICOGAME_ROMFS_XIP_OFFSET + off, buf);
+        // Verify via the XIP window (the flash calls flush the XIP cache themselves).
+        if (memcmp((const void *)(PICOGAME_ROMFS_BASE_ADDR + off), buf, PICOGAME_ROMFS_SECTOR) != 0) {
+            mp_stream_close(file);
+            mp_raise_OSError(MP_EIO);
+        }
+        off += PICOGAME_ROMFS_SECTOR;
+        remaining -= (n < remaining) ? n : remaining;
+        RUN_BACKGROUND_TASKS;                            // keep USB/MSC alive between sectors
+    }
+    mp_stream_close(file);
+    m_del(uint8_t, buf, PICOGAME_ROMFS_SECTOR);
+    return mp_obj_new_int_from_uint((uint32_t)size);
+}
+static MP_DEFINE_CONST_FUN_OBJ_1(picogame_romfs_program_obj, picogame_romfs_program);
 #endif // CIRCUITPY_PICOGAME_ROMFS_KB > 0
 // ===== end ROMFS-XIP =====
 
@@ -1501,6 +1576,7 @@ static const mp_rom_map_elem_t picogame_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR_ROMFS_SUPPORTED), MP_ROM_TRUE },
     { MP_ROM_QSTR(MP_QSTR_romfs_region), MP_ROM_PTR(&picogame_romfs_region_obj) },
     { MP_ROM_QSTR(MP_QSTR_romfs_mount), MP_ROM_PTR(&picogame_romfs_mount_obj) },
+    { MP_ROM_QSTR(MP_QSTR_romfs_program), MP_ROM_PTR(&picogame_romfs_program_obj) },
     { MP_ROM_QSTR(MP_QSTR_VfsRom), MP_ROM_PTR(&mp_type_vfs_rom) },                 // also collects the qstr
     #else
     { MP_ROM_QSTR(MP_QSTR_ROMFS_SUPPORTED), MP_ROM_FALSE },

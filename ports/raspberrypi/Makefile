@@ -475,6 +475,13 @@ endif
 endif
 
 SRC_C += shared/runtime/gchelper_native.c
+# picogame ROMFS asset region: the port-side sector writer for pg.romfs_program()
+# (no shared-bindings twin, so plain SRC_C rather than SRC_COMMON_HAL).
+ifneq ($(CIRCUITPY_PICOGAME_ROMFS_KB),)
+ifneq ($(CIRCUITPY_PICOGAME_ROMFS_KB),0)
+SRC_C += common-hal/picogame/romfs.c
+endif
+endif
 
 SRC_SDK := \
 	src/common/hardware_claim/claim.c \
