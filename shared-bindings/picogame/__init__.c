@@ -285,13 +285,15 @@ static void set_flag(picogame_sprite_obj_t *self, uint8_t flag, bool on) {
     }
 }
 
-// shadow / flash / dither are mutually exclusive (one blit effect at a time); setting one
-// clears the others, so "the last effect you set wins".
+// shadow / flash / dither are mutually exclusive (one blit effect at a time); setting one ON
+// clears the others, so "the last effect you set wins". Turning one OFF clears ONLY its own flag,
+// so clearing an effect you never enabled (e.g. spr.flash = 0) can't wipe a different active one.
 #define PICOGAME_SPR_FX_MASK (PICOGAME_SPR_SHADOW | PICOGAME_SPR_FLASH | PICOGAME_SPR_DITHER | PICOGAME_SPR_TINT)
 static void set_effect(picogame_sprite_obj_t *self, uint8_t flag, bool on) {
-    self->flags &= ~PICOGAME_SPR_FX_MASK;
     if (on) {
-        self->flags |= flag;
+        self->flags = (uint8_t)((self->flags & ~PICOGAME_SPR_FX_MASK) | flag);
+    } else {
+        self->flags &= (uint8_t) ~flag;
     }
 }
 
