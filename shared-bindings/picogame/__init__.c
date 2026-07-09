@@ -1430,8 +1430,81 @@ MP_DEFINE_CONST_OBJ_TYPE(
     );
 #endif // CIRCUITPY_PICOGAME_FRAMEBUFFER
 
+// ===== ROMFS-XIP asset region (Stage 1; review/romfs-xip-implementation-plan.md) =====
+// Assets live in a reserved flash region between NVM and the FAT drive (PICOGAME_ROMFS_BASE_ADDR /
+// PICOGAME_ROMFS_LEN from mpconfigport.h) and are read 0-copy through the XIP window. Compiled
+// only when the board carves a region (CIRCUITPY_PICOGAME_ROMFS_KB > 0); a universal build keeps
+// just ROMFS_SUPPORTED=False. Supersedes the Stage-0 frozen-blob spike (gate results: see the plan).
+#if CIRCUITPY_PICOGAME_ROMFS_KB > 0
+#include "extmod/vfs.h"
+#include "extmod/vfs_rom.h"
+#include "py/objarray.h"
+
+// Valid ROMFS image at the region base? (header magic per extmod/vfs_rom.c)
+static bool picogame_romfs_present(void) {
+    const uint8_t *base = (const uint8_t *)PICOGAME_ROMFS_BASE_ADDR;
+    return base[0] == (0x80 | 'R') && base[1] == (0x80 | 'M') && base[2] == '1';
+}
+
+//| def romfs_region() -> Optional[Tuple[int, int]]:
+//|     """The reserved asset region as ``(xip_address, length)``, or ``None`` when no valid
+//|     ROMFS image is flashed there (supported-but-empty). The function itself is absent on
+//|     builds without a region - test ``picogame.ROMFS_SUPPORTED`` first."""
+//|     ...
+static mp_obj_t picogame_romfs_region(void) {
+    if (!picogame_romfs_present()) {
+        return mp_const_none;
+    }
+    mp_obj_t items[2] = {
+        mp_obj_new_int_from_uint((uintptr_t)PICOGAME_ROMFS_BASE_ADDR),
+        mp_obj_new_int_from_uint(PICOGAME_ROMFS_LEN),
+    };
+    return mp_obj_new_tuple(2, items);
+}
+static MP_DEFINE_CONST_FUN_OBJ_0(picogame_romfs_region_obj, picogame_romfs_region);
+
+//| def romfs_mount(path: str) -> VfsRom:
+//|     """Mount the asset region's ROMFS at `path` (e.g. ``"/rom"``); files open 0-copy over
+//|     XIP flash. Raises OSError(ENODEV) when no valid image is flashed. Bypasses storage.mount
+//|     (which casts to the FAT-specific fs_user_mount_t) by inserting into the VFS table directly."""
+//|     ...
+static mp_obj_t picogame_romfs_mount(mp_obj_t path_in) {
+    if (!picogame_romfs_present()) {
+        mp_raise_OSError(MP_ENODEV);   // no image flashed - see romfs_region() / (Stage 2) romfs_program()
+    }
+    const char *path = mp_obj_str_get_str(path_in);
+    mp_obj_t buf = mp_obj_new_bytearray_by_ref(PICOGAME_ROMFS_LEN, (void *)PICOGAME_ROMFS_BASE_ADDR);  // 0-copy over flash
+    mp_obj_t vfsrom = mp_call_function_1(MP_OBJ_FROM_PTR(&mp_type_vfs_rom), buf);
+    mp_obj_t dest[4];
+    mp_load_method(vfsrom, MP_QSTR_mount, dest);
+    dest[2] = mp_const_true;   // readonly
+    dest[3] = mp_const_false;  // mkfs
+    mp_call_method_n_kw(2, 0, dest);
+    size_t path_len = strlen(path);
+    char *path_copy = m_new(char, path_len + 1);
+    memcpy(path_copy, path, path_len + 1);
+    mp_vfs_mount_t *vfs = m_new_obj(mp_vfs_mount_t);
+    vfs->str = path_copy;
+    vfs->len = path_len;
+    vfs->obj = vfsrom;
+    vfs->next = MP_STATE_VM(vfs_mount_table);
+    MP_STATE_VM(vfs_mount_table) = vfs;
+    return vfsrom;
+}
+static MP_DEFINE_CONST_FUN_OBJ_1(picogame_romfs_mount_obj, picogame_romfs_mount);
+#endif // CIRCUITPY_PICOGAME_ROMFS_KB > 0
+// ===== end ROMFS-XIP =====
+
 static const mp_rom_map_elem_t picogame_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR___name__), MP_ROM_QSTR(MP_QSTR_picogame) },
+    #if CIRCUITPY_PICOGAME_ROMFS_KB > 0
+    { MP_ROM_QSTR(MP_QSTR_ROMFS_SUPPORTED), MP_ROM_TRUE },
+    { MP_ROM_QSTR(MP_QSTR_romfs_region), MP_ROM_PTR(&picogame_romfs_region_obj) },
+    { MP_ROM_QSTR(MP_QSTR_romfs_mount), MP_ROM_PTR(&picogame_romfs_mount_obj) },
+    { MP_ROM_QSTR(MP_QSTR_VfsRom), MP_ROM_PTR(&mp_type_vfs_rom) },                 // also collects the qstr
+    #else
+    { MP_ROM_QSTR(MP_QSTR_ROMFS_SUPPORTED), MP_ROM_FALSE },
+    #endif
     { MP_ROM_QSTR(MP_QSTR_Bitmap), MP_ROM_PTR(&picogame_bitmap_type) },
     { MP_ROM_QSTR(MP_QSTR_Sprite), MP_ROM_PTR(&picogame_sprite_type) },
     #if CIRCUITPY_PICOGAME_FAST_DISPLAY

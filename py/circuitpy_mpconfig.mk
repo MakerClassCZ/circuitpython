@@ -595,6 +595,13 @@ CFLAGS += -DCIRCUITPY_PICOGAME_RGB444=$(CIRCUITPY_PICOGAME_RGB444)
 # flash-tight SPI-only boards (PicoPad) don't carry the unused function.
 CIRCUITPY_PICOGAME_FRAMEBUFFER ?= 0
 CFLAGS += -DCIRCUITPY_PICOGAME_FRAMEBUFFER=$(CIRCUITPY_PICOGAME_FRAMEBUFFER)
+# ROMFS-XIP asset region size (KB), carved between the NVM sector and the FAT drive: game assets
+# stay FILES yet blit straight from XIP flash at 0 heap (review/romfs-xip-implementation-plan.md).
+# 0 (default) = the whole feature is compiled out (universal build keeps only
+# picogame.ROMFS_SUPPORTED=False, ~30 B). A game-flavor board sets e.g. 64. NOTE: changing the
+# value moves the FAT drive start -> CIRCUITPY reformats on first boot (document per board).
+CIRCUITPY_PICOGAME_ROMFS_KB ?= 0
+CFLAGS += -DCIRCUITPY_PICOGAME_ROMFS_KB=$(CIRCUITPY_PICOGAME_ROMFS_KB)
 
 CIRCUITPY_STATUS_BAR ?= 1
 CFLAGS += -DCIRCUITPY_STATUS_BAR=$(CIRCUITPY_STATUS_BAR)
