@@ -579,8 +579,8 @@ CFLAGS += -DCIRCUITPY_STAGE=$(CIRCUITPY_STAGE)
 # Experimental PicoPad game engine (off by default).
 CIRCUITPY_PICOGAME ?= 0
 CFLAGS += -DCIRCUITPY_PICOGAME=$(CIRCUITPY_PICOGAME)
-# Fast async-DMA Display backend: needs a port-specific common-hal (only the
-# raspberrypi port provides one). Boards without it build picogame with the
+# Fast async-DMA Display backend: needs a port-specific common-hal (the raspberrypi
+# and espressif ports provide one). Boards without it build picogame with the
 # portable bus.send renderer. Gates both the C type and common-hal/picogame/Display.c.
 CIRCUITPY_PICOGAME_FAST_DISPLAY ?= 0
 CFLAGS += -DCIRCUITPY_PICOGAME_FAST_DISPLAY=$(CIRCUITPY_PICOGAME_FAST_DISPLAY)
