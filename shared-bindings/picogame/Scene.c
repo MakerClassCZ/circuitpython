@@ -221,6 +221,10 @@ static void scene_add_one(picogame_scene_obj_t *self, mp_obj_t item_in, bool fix
     self->snap[self->count].dither = 0;
     self->snap[self->count].flash_color = 0;
     self->count++;
+    // Honour "drawn on the next refresh" for EVERY kind: the zeroed snapshot covers sprites,
+    // but a re-add()ed Canvas/Tilemap whose dirty flag was already consumed would otherwise
+    // stay invisible until some other change. add() is a cold path -> force a full repaint.
+    self->cleared = false;
 }
 
 static mp_obj_t picogame_scene_add(size_t n_args, const mp_obj_t *pos_args, mp_map_t *kw_args) {
