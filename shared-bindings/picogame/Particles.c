@@ -49,13 +49,15 @@ static mp_obj_t picogame_particles_make_new(const mp_obj_type_t *type, size_t n_
     self->size = size;
     self->gravity = (int16_t)(gravity * 256);
     self->fade = args[ARG_fade].u_bool;
-    self->px = m_new(int32_t, cap);
-    self->py = m_new(int32_t, cap);
-    self->vx = m_new(int16_t, cap);
-    self->vy = m_new(int16_t, cap);
-    self->life = m_new(uint16_t, cap);
-    self->life0 = m_new(uint16_t, cap);
-    self->color = m_new(uint16_t, cap);
+    // Pure numeric arrays, no Python pointers -> exempt from the conservative GC scan
+    // (shorter gc.collect() pauses; fixed at construction, never m_renew'd).
+    self->px = m_malloc_without_collect(cap * sizeof(int32_t));
+    self->py = m_malloc_without_collect(cap * sizeof(int32_t));
+    self->vx = m_malloc_without_collect(cap * sizeof(int16_t));
+    self->vy = m_malloc_without_collect(cap * sizeof(int16_t));
+    self->life = m_malloc_without_collect(cap * sizeof(uint16_t));
+    self->life0 = m_malloc_without_collect(cap * sizeof(uint16_t));
+    self->color = m_malloc_without_collect(cap * sizeof(uint16_t));
     reset_dirty(self);
     return MP_OBJ_FROM_PTR(self);
 }

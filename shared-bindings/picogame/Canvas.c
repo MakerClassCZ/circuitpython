@@ -53,7 +53,9 @@ static mp_obj_t picogame_canvas_make_new(const mp_obj_type_t *type, size_t n_arg
         self->data = bi.buf;
         self->data_obj = args[ARG_buffer].u_obj;   // keep the backing object alive (GC-traced)
     } else {
-        self->data = m_new(uint16_t, (size_t)w * h);
+        // Pure pixel data, no Python pointers -> exempt from the conservative GC scan
+        // (shorter gc.collect() pauses; a 150x60 canvas is 18 KB the mark phase can skip).
+        self->data = m_malloc_without_collect((size_t)w * h * sizeof(uint16_t));
         self->data_obj = MP_OBJ_NULL;
     }
     if (args[ARG_transparent].u_obj != mp_const_none) {
