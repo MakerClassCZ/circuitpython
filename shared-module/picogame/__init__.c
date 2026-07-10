@@ -407,11 +407,45 @@ static void corners_bbox(int sw, int sh, int px, int py, int pivx, int pivy,
     *maxy = xy;
 }
 
+// Fill the sprite's affine cache (position-relative bbox + 16.16 inverse-map steps) if stale.
+// The trig LUT, the 4-corner bbox and the TWO SOFTWARE DIVIDES below used to re-run once per
+// strip a rotated sprite touched (~6x/frame at strip_h=8) plus once for the dirty-rect AABB;
+// now once per angle/scale/bitmap/anchor change (those setters clear xf_valid).
+static void sprite_xform_fill(picogame_sprite_obj_t *s) {
+    if (s->xf_valid) {
+        return;
+    }
+    int w = (s->bitmap != NULL) ? s->bitmap->width : 0;
+    int h = (s->bitmap != NULL) ? s->bitmap->height : 0;
+    int pivx = ((int)s->anchor_x * w) >> 8, pivy = ((int)s->anchor_y * h) >> 8;
+    int32_t cos_q = pg_cos_q15(s->angle), sin_q = pg_sin_q15(s->angle);   // Q15 LUT trig
+    int minx, miny, maxx, maxy;
+    corners_bbox(w, h, 0, 0, pivx, pivy, (int32_t)s->scale, cos_q, sin_q,
+        &minx, &miny, &maxx, &maxy);
+    s->xf_minx = (int16_t)minx;
+    s->xf_miny = (int16_t)miny;
+    s->xf_maxx = (int16_t)maxx;
+    s->xf_maxy = (int16_t)maxy;
+    // inverse map (16.16 fixed-point): u = pivx + (ic*(X-px) + is*(Y-py));
+    //                                  v = pivy + (-is*(X-px) + ic*(Y-py))
+    // ic = (cs/sf)*65536 = cos_q15 * 512 / scale - computed in pure integer (no float).
+    int32_t nic = cos_q * 512, nis = sin_q * 512;
+    int sc = (int)s->scale;
+    if (sc < 1) {
+        sc = 1;                   // scale is setter-clamped >= 1; belt for a zeroed struct
+    }
+    s->xf_ic = (nic >= 0 ? nic + sc / 2 : nic - sc / 2) / sc;
+    s->xf_is = (nis >= 0 ? nis + sc / 2 : nis - sc / 2) / sc;
+    s->xf_valid = 1;
+}
+
 void picogame_blit_bitmap_affine(
     uint16_t *buf, int bw, int bh, int ox, int oy,
     picogame_bitmap_obj_t *bm, int px, int py, int pivx, int pivy,
-    int frame, bool fx, bool fy, uint16_t scale, int angle, const picogame_fx_t *fxm) {
-    if (bm == NULL || scale == 0) {
+    int frame, bool fx, bool fy,
+    int minx, int miny, int maxx, int maxy, int32_t ic, int32_t is,
+    const picogame_fx_t *fxm) {
+    if (bm == NULL) {
         return;
     }
     int sw = bm->width, sh = bm->height;
@@ -421,21 +455,11 @@ void picogame_blit_bitmap_affine(
         frame = 0;
     }
     int frame_col = frame * sw, stride = bm->stride;
-    int32_t cos_q = pg_cos_q15(angle), sin_q = pg_sin_q15(angle);   // fixed-point trig (LUT)
-    int minx, maxx, miny, maxy;
-    corners_bbox(sw, sh, px, py, pivx, pivy, (int32_t)scale, cos_q, sin_q, &minx, &miny, &maxx, &maxy);
     int x_start = picogame_imax(minx, ox), y_start = picogame_imax(miny, oy);
     int x_end = picogame_imin(maxx + 1, ox + bw), y_end = picogame_imin(maxy + 1, oy + bh);
     if (x_start >= x_end || y_start >= y_end) {
         return;
     }
-    // inverse map (16.16 fixed-point): u = pivx + (ic*(X-px) + is*(Y-py));
-    //                                  v = pivy + (-is*(X-px) + ic*(Y-py))
-    // ic = (cs/sf)*65536 = cos_q15 * 512 / scale - computed in pure integer (no float).
-    int32_t nic = cos_q * 512, nis = sin_q * 512;
-    int sc = (int)scale;
-    int ic = (nic >= 0 ? nic + sc / 2 : nic - sc / 2) / sc;
-    int is = (nis >= 0 ? nis + sc / 2 : nis - sc / 2) / sc;
     // 32-bit 16.16 accumulators (cheaper than 64-bit on the M0+, where a 64-bit add is a multi-op
     // sequence). The peak magnitude pivot<<16 + ic*dx + is*dy stays well within int32 for any sane
     // sprite on a handheld screen (only >~30x magnification on a 320x240-class display could wrap it,
@@ -481,15 +505,13 @@ void picogame_sprite_aabb(const picogame_sprite_obj_t *s, int *x1, int *y1, int 
         *y2 = ty + sh;
         return;
     }
-    int32_t cos_q = pg_cos_q15(s->angle), sin_q = pg_sin_q15(s->angle);   // Q15 LUT trig, no sinf/cosf
+    // cache-fill mutates only the derived xf_* fields - logically const for callers
+    sprite_xform_fill((picogame_sprite_obj_t *)s);
     int px = s->x >> 8, py = s->y >> 8;
-    int pivx = ((int)s->anchor_x * w) >> 8, pivy = ((int)s->anchor_y * h) >> 8;   // integer pivot (matches the blit)
-    int minx, maxx, miny, maxy;
-    corners_bbox(w, h, px, py, pivx, pivy, (int32_t)s->scale, cos_q, sin_q, &minx, &miny, &maxx, &maxy);
-    *x1 = minx - 1;
-    *y1 = miny - 1;
-    *x2 = maxx + 2;
-    *y2 = maxy + 2;
+    *x1 = px + s->xf_minx - 1;
+    *y1 = py + s->xf_miny - 1;
+    *x2 = px + s->xf_maxx + 2;
+    *y2 = py + s->xf_maxy + 2;
 }
 
 // clip_x/clip_y = the strip buffer's screen origin; vx/vy = view offset added to
@@ -525,12 +547,15 @@ static void blit_sprite(uint16_t *buf, int bw, int bh, int clip_x, int clip_y,
         picogame_blit_bitmap_scaled(buf, bw, bh, clip_x, clip_y, spr->bitmap,
             tx + vx, ty + vy, spr->frame, fx, fy, spr->scale, fxp);
     } else {
+        sprite_xform_fill(spr);            // once per angle/scale change, not per strip
         int w = (spr->bitmap != NULL) ? spr->bitmap->width : 0;
         int h = (spr->bitmap != NULL) ? spr->bitmap->height : 0;
         int pivx = ((int)spr->anchor_x * w) >> 8, pivy = ((int)spr->anchor_y * h) >> 8;
+        int px = (spr->x >> 8) + vx, py = (spr->y >> 8) + vy;
         picogame_blit_bitmap_affine(buf, bw, bh, clip_x, clip_y, spr->bitmap,
-            (spr->x >> 8) + vx, (spr->y >> 8) + vy, pivx, pivy,
-            spr->frame, fx, fy, spr->scale, spr->angle, fxp);
+            px, py, pivx, pivy, spr->frame, fx, fy,
+            px + spr->xf_minx, py + spr->xf_miny, px + spr->xf_maxx, py + spr->xf_maxy,
+            spr->xf_ic, spr->xf_is, fxp);
     }
 }
 

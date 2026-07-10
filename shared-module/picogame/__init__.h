@@ -105,12 +105,15 @@ void picogame_blit_bitmap_scaled(
     uint16_t scale, const picogame_fx_t *fxm);
 
 // Full affine blit (scale + rotation about the anchor); (px,py)=screen anchor point,
-// (pivx,pivy)=that anchor in SOURCE pixels, scale 8.8, angle in whole degrees.
-// Nearest-neighbour inverse map.
+// (pivx,pivy)=that anchor in SOURCE pixels. Nearest-neighbour inverse map. The transform is
+// PRECOMPUTED by the caller (the sprite's xf_* cache): minx..maxy = the screen-space corner
+// bbox, ic/is = the 16.16 inverse-map steps - so a per-strip call does no trig/divides.
 void picogame_blit_bitmap_affine(
     uint16_t *buf, int bw, int bh, int ox, int oy,
     picogame_bitmap_obj_t *bm, int px, int py, int pivx, int pivy,
-    int frame, bool flip_x, bool flip_y, uint16_t scale, int angle, const picogame_fx_t *fxm);
+    int frame, bool flip_x, bool flip_y,
+    int minx, int miny, int maxx, int maxy, int32_t ic, int32_t is,
+    const picogame_fx_t *fxm);
 
 // Fill a strip with background, then composite items (sprites and tilemaps) in
 // order (items[0] = bottom). kinds[i] selects the type; kinds == NULL means

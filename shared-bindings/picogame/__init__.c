@@ -450,7 +450,9 @@ static mp_obj_t sprite_set_scale(mp_obj_t self_in, mp_obj_t v) {
     if (q > 65535) {
         q = 65535;
     }
-    ((picogame_sprite_obj_t *)MP_OBJ_TO_PTR(self_in))->scale = (uint16_t)q;
+    picogame_sprite_obj_t *self = MP_OBJ_TO_PTR(self_in);
+    self->scale = (uint16_t)q;
+    self->xf_valid = 0;                              // affine cache depends on scale
     return mp_const_none;
 }
 static MP_DEFINE_CONST_FUN_OBJ_2(sprite_set_scale_obj, sprite_set_scale);
@@ -472,7 +474,9 @@ static mp_obj_t sprite_set_angle(mp_obj_t self_in, mp_obj_t v) {
         a = (int)(f + (f >= 0 ? (mp_float_t)0.5 : (mp_float_t)-0.5));
     }
     a %= 360;
-    ((picogame_sprite_obj_t *)MP_OBJ_TO_PTR(self_in))->angle = (int16_t)a;
+    picogame_sprite_obj_t *self = MP_OBJ_TO_PTR(self_in);
+    self->angle = (int16_t)a;
+    self->xf_valid = 0;                              // affine cache depends on angle
     return mp_const_none;
 }
 static MP_DEFINE_CONST_FUN_OBJ_2(sprite_set_angle_obj, sprite_set_angle);
@@ -607,6 +611,7 @@ static mp_obj_t sprite_set_bitmap(mp_obj_t self_in, mp_obj_t v) {
     picogame_sprite_obj_t *self = MP_OBJ_TO_PTR(self_in);
     mp_obj_t bm = mp_arg_validate_type(v, &picogame_bitmap_type, MP_QSTR_bitmap);
     self->bitmap = MP_OBJ_TO_PTR(bm);
+    self->xf_valid = 0;                              // affine cache depends on bitmap dims
     return mp_const_none;
 }
 static MP_DEFINE_CONST_FUN_OBJ_2(sprite_set_bitmap_obj, sprite_set_bitmap);
@@ -641,6 +646,7 @@ static mp_obj_t sprite_set_anchor(mp_obj_t self_in, mp_obj_t v) {
     }
     self->anchor_x = anchor_to_fp(items[0]);
     self->anchor_y = anchor_to_fp(items[1]);
+    self->xf_valid = 0;                              // affine cache depends on the pivot
     return mp_const_none;
 }
 static MP_DEFINE_CONST_FUN_OBJ_2(sprite_set_anchor_obj, sprite_set_anchor);

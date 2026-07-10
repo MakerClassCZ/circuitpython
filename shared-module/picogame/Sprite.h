@@ -35,4 +35,12 @@ typedef struct {
     uint8_t flags;
     uint8_t seq;          // bumped by touch() to force a repaint after an in-place bitmap mutation
     uint8_t dither;       // DITHER mode: transparency level 0..16 (0=opaque, 16=invisible)
+    // ---- affine transform cache (angle != 0 path). Filled lazily on first use, invalidated
+    // by the scale/angle/bitmap/anchor setters (xf_valid = 0). POSITION-INDEPENDENT: the bbox
+    // is relative to the sprite's integer position, ic/is are the 16.16 inverse-map steps.
+    // Saves the trig LUT + 4-corner bbox + two software divides that otherwise re-run once per
+    // STRIP the sprite touches (~6x/frame at strip_h=8) plus once for the dirty-rect AABB.
+    uint8_t xf_valid;
+    int16_t xf_minx, xf_miny, xf_maxx, xf_maxy;  // corners bbox relative to (x>>8, y>>8)
+    int32_t xf_ic, xf_is;                        // inverse-map steps (16.16)
 } picogame_sprite_obj_t;
