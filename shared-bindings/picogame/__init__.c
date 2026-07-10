@@ -1437,6 +1437,12 @@ static const mp_rom_map_elem_t picogame_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR_rgb565), MP_ROM_PTR(&picogame_rgb565_obj) },
     { MP_ROM_QSTR(MP_QSTR_RGB565), MP_ROM_INT(PICOGAME_FMT_RGB565) },
     { MP_ROM_QSTR(MP_QSTR_PAL8), MP_ROM_INT(PICOGAME_FMT_PAL8) },
+    // Engine API level: bump by 1 whenever the PYTHON-VISIBLE surface grows (new method/property/
+    // module function/constant), so picogame-libs can diagnose a too-old firmware up front
+    // ("needs API_LEVEL >= N") instead of failing later with a random missing attribute.
+    // Level 1 = the 2026-07 surface (post API-freeze + Canvas.text/Framebuffer/StripDraw
+    // always_dirty/ROMFS). Older firmwares have no attribute at all -> getattr(pg, "API_LEVEL", 0).
+    { MP_ROM_QSTR(MP_QSTR_API_LEVEL), MP_ROM_INT(1) },
     // Build-time capability flag: does THIS board's panel controller support 12-bit RGB444
     // (COLMOD)? The board declares it (it knows its controller); a game reads it to enable
     // Display(rgb444=...) only where it works - one codebase runs on ST7789 AND ILI9341.
