@@ -14,6 +14,7 @@
 #include "shared-bindings/picogame/Sprite.h"
 #if CIRCUITPY_PICOGAME_FAST_DISPLAY
 #include "shared-bindings/picogame/Display.h"   // fast DMA backend; absent on portable ports
+#include "common-hal/picogame/Display.h"        // its struct (pg_get_display unwraps the wrapper)
 #endif
 #include "shared-bindings/picogame/Scene.h"
 #include "shared-bindings/picogame/Tilemap.h"
@@ -304,7 +305,17 @@ static int32_t pg_round_fp8(mp_float_t f) {
 }
 
 // Cast a (possibly subclassed) BusDisplay arg to its native object, raising if it isn't one.
+// Also accepts the pg.Display fast-DMA wrapper (unwrapped to its underlying busdisplay - the
+// portable send path): any handle that identifies the panel works wherever a display is
+// expected, so the same object a Scene renders through also works for render()/invert().
+// Without this, code holding the wrapper (custom setup, rgb444) worked on ports WITHOUT the
+// fast backend and TypeError'd on ports WITH it.
 static busdisplay_busdisplay_obj_t *pg_get_display(mp_obj_t obj) {
+    #if CIRCUITPY_PICOGAME_FAST_DISPLAY
+    if (mp_obj_is_type(obj, &picogame_display_type)) {
+        return ((picogame_display_obj_t *)MP_OBJ_TO_PTR(obj))->display;
+    }
+    #endif
     mp_obj_t native = mp_obj_cast_to_native_base(obj, &busdisplay_busdisplay_type);
     if (!mp_obj_is_type(native, &busdisplay_busdisplay_type)) {
         mp_raise_TypeError(MP_ERROR_TEXT("expected a BusDisplay"));
