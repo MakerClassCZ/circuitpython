@@ -696,13 +696,13 @@ static void pg_obj_to_box(mp_obj_t o, int *x1, int *y1, int *x2, int *y2) {
         MP_QSTR_other, MP_QSTR_Sprite, MP_QSTR_tuple, mp_obj_get_type(o)->name);
 }
 
-//| def overlaps(self, other: "Sprite | tuple", inset: int = 0) -> bool:
-//|     """True if this sprite's drawn box overlaps `other` - an inclusive AABB, so they
+//|     def overlaps(self, other: "Sprite | tuple", inset: int = 0) -> bool:
+//|         """True if this sprite's drawn box overlaps `other` - an inclusive AABB, so they
 //|         collide the moment they touch. `other` may be another Sprite, a point `(x, y)`,
 //|         or a rect `(x1, y1, x2, y2)` (e.g. a trigger zone or the screen for culling).
 //|         The box is anchor/scale/rotation aware. `inset` shrinks THIS sprite's box by N px
 //|         on each side, for a fair hitbox smaller than the art."""
-//|     ...
+//|         ...
 static mp_obj_t sprite_overlaps(size_t n_args, const mp_obj_t *pos_args, mp_map_t *kw_args) {
     enum { ARG_other, ARG_inset };
     static const mp_arg_t allowed[] = {
@@ -721,12 +721,12 @@ static mp_obj_t sprite_overlaps(size_t n_args, const mp_obj_t *pos_args, mp_map_
 }
 static MP_DEFINE_CONST_FUN_OBJ_KW(sprite_overlaps_obj, 2, sprite_overlaps);
 
-//| def near(self, other: "Sprite | tuple", r: int) -> bool:
-//|     """True if this sprite's centre is within `r` pixels of `other`'s centre (squared
+//|     def near(self, other: "Sprite | tuple", r: int) -> bool:
+//|         """True if this sprite's centre is within `r` pixels of `other`'s centre (squared
 //|         distance, no sqrt) - the round/forgiving test for bullets, pickups, explosions.
 //|         `other` may be a Sprite or a point `(x, y)`. Centres come from the drawn box, so
 //|         it is anchor aware."""
-//|     ...
+//|         ...
 static mp_obj_t sprite_near(mp_obj_t self_in, mp_obj_t other_in, mp_obj_t r_in) {
     int ax1, ay1, ax2, ay2;
     picogame_sprite_aabb(MP_OBJ_TO_PTR(self_in), &ax1, &ay1, &ax2, &ay2);
