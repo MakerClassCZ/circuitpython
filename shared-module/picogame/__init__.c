@@ -422,10 +422,13 @@ static void sprite_xform_fill(picogame_sprite_obj_t *s) {
     int minx, miny, maxx, maxy;
     corners_bbox(w, h, 0, 0, pivx, pivy, (int32_t)s->scale, cos_q, sin_q,
         &minx, &miny, &maxx, &maxy);
-    s->xf_minx = (int16_t)minx;
-    s->xf_miny = (int16_t)miny;
-    s->xf_maxx = (int16_t)maxx;
-    s->xf_maxy = (int16_t)maxy;
+    // Saturate into the int16 cache fields: an extreme scale x size (public scale allows
+    // ~256x) could exceed +-32767; a saturated bbox only over/under-covers the clip - the
+    // blitter clips per strip anyway - instead of wrapping into a wrong-sign rect.
+    s->xf_minx = (int16_t)(minx < -32768 ? -32768 : (minx > 32767 ? 32767 : minx));
+    s->xf_miny = (int16_t)(miny < -32768 ? -32768 : (miny > 32767 ? 32767 : miny));
+    s->xf_maxx = (int16_t)(maxx < -32768 ? -32768 : (maxx > 32767 ? 32767 : maxx));
+    s->xf_maxy = (int16_t)(maxy < -32768 ? -32768 : (maxy > 32767 ? 32767 : maxy));
     // inverse map (16.16 fixed-point): u = pivx + (ic*(X-px) + is*(Y-py));
     //                                  v = pivy + (-is*(X-px) + ic*(Y-py))
     // ic = (cs/sf)*65536 = cos_q15 * 512 / scale - computed in pure integer (no float).

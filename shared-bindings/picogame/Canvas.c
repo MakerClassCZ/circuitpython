@@ -107,7 +107,9 @@ static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(canvas_fill_rect_obj, 6, 6, canvas_fi
 static mp_obj_t canvas_blit(size_t n, const mp_obj_t *a) {
     picogame_bitmap_obj_t *bm = MP_OBJ_TO_PTR(
         mp_arg_validate_type(a[1], &picogame_bitmap_type, MP_QSTR_bitmap));
-    int frame = (n > 4) ? mp_obj_get_int(a[4]) : 0;
+    // Same domain as Sprite.frame (uint8): a negative frame would survive the blitter's
+    // wrap (C % keeps the sign) and read before the sheet data.
+    int frame = (n > 4) ? (int)mp_arg_validate_int_range(mp_obj_get_int(a[4]), 0, 255, MP_QSTR_frame) : 0;
     bool fx = (n > 5) ? mp_obj_is_true(a[5]) : false;
     bool fy = (n > 6) ? mp_obj_is_true(a[6]) : false;
     picogame_canvas_blit(cv_self(a[0]), bm, mp_obj_get_int(a[2]), mp_obj_get_int(a[3]), frame, fx, fy);
