@@ -22,4 +22,10 @@ void common_hal_picogame_romfs_write_sector(uint32_t flash_offset, const uint8_t
     supervisor_flash_post_write();
 }
 
+void common_hal_picogame_romfs_erase_sector(uint32_t flash_offset) {
+    supervisor_flash_pre_write();
+    flash_range_erase(flash_offset, PICOGAME_ROMFS_SECTOR);
+    supervisor_flash_post_write();
+}
+
 #endif // CIRCUITPY_PICOGAME_ROMFS_KB > 0

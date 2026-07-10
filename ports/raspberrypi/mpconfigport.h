@@ -40,6 +40,14 @@
 #define PICOGAME_ROMFS_XIP_OFFSET (CIRCUITPY_FIRMWARE_SIZE + CIRCUITPY_INTERNAL_NVM_SIZE)
 #define PICOGAME_ROMFS_BASE_ADDR  (0x10000000 + PICOGAME_ROMFS_XIP_OFFSET)
 #define PICOGAME_ROMFS_LEN        (CIRCUITPY_PICOGAME_ROMFS_KB * 1024)
+// The region-safety invariants romfs_program() relies on (exact sector accounting keeps every
+// write inside [OFFSET, OFFSET+LEN) ONLY if both ends are 4K-aligned) - enforced at build time:
+#if (CIRCUITPY_PICOGAME_ROMFS_KB % 4) != 0
+#error "CIRCUITPY_PICOGAME_ROMFS_KB must be a multiple of 4 (4 KB flash sectors)"
+#endif
+#if (PICOGAME_ROMFS_XIP_OFFSET % 4096) != 0
+#error "PICOGAME_ROMFS_XIP_OFFSET must be 4 KB aligned (check CIRCUITPY_FIRMWARE_SIZE / NVM size)"
+#endif
 // the region implies ROMFS filesystem support (the vfs_rom extmod is self-gated on this);
 // IOCTL stays 0: CP lacks MicroPython's rom_ioctl port glue - deploy is pg.romfs_program instead
 #ifndef MICROPY_VFS_ROM

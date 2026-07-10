@@ -16,4 +16,6 @@ extern const mp_obj_type_t picogame_stripdraw_type;
 // The port supplies the XIP-safe dance (IRQs off, audio DMA paused, cache flushed).
 #define PICOGAME_ROMFS_SECTOR (4096)
 void common_hal_picogame_romfs_write_sector(uint32_t flash_offset, const uint8_t *buf);
+// Erase one sector WITHOUT programming (used to invalidate the header before a rewrite).
+void common_hal_picogame_romfs_erase_sector(uint32_t flash_offset);
 #endif
