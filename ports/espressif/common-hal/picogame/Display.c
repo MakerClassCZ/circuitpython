@@ -99,6 +99,11 @@ void common_hal_picogame_display_render(picogame_display_obj_t *self,
     spi_transaction_t trans[2][PICOGAME_MAX_STRIP_CHUNKS];
     int inflight[2] = { 0, 0 };   // chunks queued from bufs[i], awaiting result
 
+    // A StripDraw callback may latch a BaseException (Ctrl-C / auto-reload). Like the portable
+    // renderer and the RP backend, re-raise it -- but only AFTER the queued transfers drain and
+    // the bus transaction closes, so hold it here and propagate below.
+    mp_obj_t pending = MP_OBJ_NULL;
+
     int cur = 0;
     bool first = true;
     for (int sy = cy0; sy < cy1; sy += strip_h) {
@@ -111,7 +116,7 @@ void common_hal_picogame_display_render(picogame_display_obj_t *self,
 
         // Blit this strip. If the OTHER buffer has a strip in flight, its DMA
         // transfer overlaps this CPU work -- the whole point of the fast path.
-        picogame_blit_strip_layers(buf, region_w, sy, sh, cx0, items, kinds, n,
+        pending = picogame_blit_strip_layers(buf, region_w, sy, sh, cx0, items, kinds, n,
             background, ox, oy);
 
         int nch;
@@ -130,10 +135,17 @@ void common_hal_picogame_display_render(picogame_display_obj_t *self,
                 CHIP_SELECT_UNTOUCHED, (uint8_t *)buf, nbytes);
         }
         cur ^= 1;
+        if (pending != MP_OBJ_NULL) {   // callback interrupted: this strip is queued, now stop + flush
+            break;
+        }
     }
 
     drain(spi, &inflight[0]);
     drain(spi, &inflight[1]);
 
     displayio_display_bus_end_transaction(&display->bus);
+
+    if (pending != MP_OBJ_NULL) {        // bus now closed -> safe to re-raise (Ctrl-C / reload)
+        nlr_raise(MP_OBJ_TO_PTR(pending));
+    }
 }
