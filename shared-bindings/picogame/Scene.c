@@ -347,7 +347,9 @@ static int scene_collect_dirty_rects(picogame_scene_obj_t *self, int w, int h, p
         rects[0].y2 = h;
         nr = 1;
         snapshot_sync(self);
-        self->cleared = true;
+        // NOTE: cleared flips to true only after the RENDER completes (see the callers) -
+        // the snapshots are already advanced here, so an exception mid-render would
+        // otherwise leave a partially painted frame that no later refresh repairs.
     }
 
     // Clip every dirty rect to the play rect [left, w-right) x [top, h-bottom); the
@@ -417,15 +419,20 @@ static mp_obj_t scene_refresh_fb(picogame_scene_obj_t *self) {
         return mp_const_none;
     }
 
+    // Snapshots are already advanced; stay in the needs-full-repaint state until the
+    // render completes, so a BaseException mid-render (Ctrl-C in a StripDraw) leaves a
+    // scene whose NEXT refresh repaints everything instead of keeping a torn frame.
+    self->cleared = false;
     for (int i = 0; i < nr; i++) {
         mp_obj_t exc = picogame_render_framebuffer(fbt->fb, fbt->width, fbt->height, fbt->native_rgb565,
             self->items, self->kinds, self->count,
             rects[i].x1, rects[i].y1, rects[i].x2, rects[i].y2,
             self->background, self->ox, self->oy);
         if (exc != MP_OBJ_NULL) {
-            nlr_raise(MP_OBJ_TO_PTR(exc));
+            nlr_raise(MP_OBJ_TO_PTR(exc));   // cleared stays false -> full repaint next refresh
         }
     }
+    self->cleared = true;
     return scene_store_dirty(self, rects, nr, w, h);
 }
 #endif // CIRCUITPY_PICOGAME_FRAMEBUFFER
@@ -474,6 +481,10 @@ static mp_obj_t picogame_scene_refresh(mp_obj_t self_in) {
 
     // Render each dirty rect independently; return their bounding union (kept for
     // the existing "dirty WxH" debug prints).
+    // Snapshots are already advanced; stay in the needs-full-repaint state until the
+    // render completes, so a BaseException mid-render (Ctrl-C in a StripDraw) leaves a
+    // scene whose NEXT refresh repaints everything instead of keeping a torn frame.
+    self->cleared = false;
     for (int i = 0; i < nr; i++) {
         #if CIRCUITPY_PICOGAME_FAST_DISPLAY
         if (self->fast) {
@@ -491,6 +502,7 @@ static mp_obj_t picogame_scene_refresh(mp_obj_t self_in) {
                 self->background, self->ox, self->oy);
         }
     }
+    self->cleared = true;
 
     return scene_store_dirty(self, rects, nr, w, h);
 }

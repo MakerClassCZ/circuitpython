@@ -858,7 +858,8 @@ mp_obj_t picogame_render_framebuffer(
         // a NATIVE target converts each row in place only after it is fully composed.
         // On a latched exception the row was partially composed in wire order - convert
         // it too, so the framebuffer is never left half wire / half native (one Cortex
-        // REV16 per pixel; the Scene snapshot wasn't updated, the next refresh repaints).
+        // REV16 per pixel; the Scene keeps cleared=false until its render loop finishes,
+        // so the refresh after the exception repaints the full frame).
         if (native_rgb565) {
             for (int i = 0; i < region_w; i++) {
                 row[i] = (uint16_t)__builtin_bswap16(row[i]);
