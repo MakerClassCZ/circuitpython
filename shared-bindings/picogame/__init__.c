@@ -1078,7 +1078,7 @@ static mp_obj_t picogame_render_fun(size_t n_args, const mp_obj_t *pos_args, mp_
     if (fbt != NULL) {
         // Framebuffer target: composite the region straight into it (no strip buffer, no
         // bus). Same compositor as the SPI path; re-raise a latched StripDraw exception.
-        mp_obj_t exc = picogame_render_framebuffer(fbt->fb, fbt->width, fbt->height,
+        mp_obj_t exc = picogame_render_framebuffer(fbt->fb, fbt->width, fbt->height, fbt->native_rgb565,
             items, kinds, n,
             args[ARG_x0].u_int, args[ARG_y0].u_int, args[ARG_x1].u_int, args[ARG_y1].u_int,
             args[ARG_background].u_int, 0, 0);
@@ -1363,30 +1363,43 @@ static MP_DEFINE_CONST_FUN_OBJ_KW(picogame_fbm1d_fx_obj, 1, picogame_fbm1d_fx);
 // platforms - WASM playground, desktop sim, FruitJam DVI/HSTX)
 // ---------------------------------------------------------------------------
 //| class Framebuffer:
-//|     """A RAM framebuffer render target (wire-order RGB565) that a Scene or
-//|     :py:func:`render` can draw into instead of a BusDisplay. ``buffer`` must be a
-//|     writable buffer of at least ``width*height*2`` bytes; the caller owns it (a
-//|     ``bytearray`` in the browser, the DVI scanout buffer on FruitJam)."""
+//|     """A RAM framebuffer render target that a Scene or :py:func:`render` can draw
+//|     into instead of a BusDisplay. ``buffer`` must be a writable buffer of at least
+//|     ``width*height*2`` bytes; the caller owns it (a ``bytearray`` in the browser, the
+//|     DVI scanout buffer on FruitJam). By default the pixels are wire-order RGB565 (the
+//|     engine's internal format); ``native_rgb565=True`` byte-swaps each finished region
+//|     to NATIVE RGB565 in place - the format picodvi / canvas scanout targets expect -
+//|     while assets, palettes and ``rgb565()`` stay wire-order throughout."""
 //|
-//|     def __init__(self, buffer: WriteableBuffer, width: int, height: int) -> None: ...
+//|     def __init__(self, buffer: WriteableBuffer, width: int, height: int, *,
+//|                  native_rgb565: bool = False) -> None: ...
 static mp_obj_t picogame_framebuffer_make_new(const mp_obj_type_t *type, size_t n_args,
     size_t n_kw, const mp_obj_t *all_args) {
-    mp_arg_check_num(n_args, n_kw, 3, 3, false);
-    mp_int_t width = mp_arg_validate_int_range(mp_obj_get_int(all_args[1]), 1, 4096, MP_QSTR_width);
-    mp_int_t height = mp_arg_validate_int_range(mp_obj_get_int(all_args[2]), 1, 4096, MP_QSTR_height);
+    enum { ARG_buffer, ARG_width, ARG_height, ARG_native_rgb565 };
+    static const mp_arg_t allowed_args[] = {
+        { MP_QSTR_buffer, MP_ARG_REQUIRED | MP_ARG_OBJ },
+        { MP_QSTR_width, MP_ARG_REQUIRED | MP_ARG_INT },
+        { MP_QSTR_height, MP_ARG_REQUIRED | MP_ARG_INT },
+        { MP_QSTR_native_rgb565, MP_ARG_KW_ONLY | MP_ARG_BOOL, {.u_bool = false} },
+    };
+    mp_arg_val_t args[MP_ARRAY_SIZE(allowed_args)];
+    mp_arg_parse_all_kw_array(n_args, n_kw, all_args, MP_ARRAY_SIZE(allowed_args), allowed_args, args);
+    mp_int_t width = mp_arg_validate_int_range(args[ARG_width].u_int, 1, 4096, MP_QSTR_width);
+    mp_int_t height = mp_arg_validate_int_range(args[ARG_height].u_int, 1, 4096, MP_QSTR_height);
 
     mp_buffer_info_t bi;
-    mp_get_buffer_raise(all_args[0], &bi, MP_BUFFER_WRITE);
+    mp_get_buffer_raise(args[ARG_buffer].u_obj, &bi, MP_BUFFER_WRITE);
     uint64_t need = (uint64_t)width * (uint64_t)height * 2u;
     if ((uint64_t)bi.len < need) {
         mp_raise_ValueError(MP_ERROR_TEXT("buffer too small"));
     }
 
     picogame_framebuffer_obj_t *self = mp_obj_malloc(picogame_framebuffer_obj_t, type);
-    self->buffer = all_args[0];
+    self->buffer = args[ARG_buffer].u_obj;
     self->fb = (uint16_t *)bi.buf;
     self->width = width;
     self->height = height;
+    self->native_rgb565 = args[ARG_native_rgb565].u_bool;
     return MP_OBJ_FROM_PTR(self);
 }
 

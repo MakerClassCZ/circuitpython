@@ -173,9 +173,11 @@ void picogame_render(
 typedef struct {
     mp_obj_base_t base;
     mp_obj_t buffer;     // the backing WriteableBuffer (kept alive)
-    uint16_t *fb;        // typed view of buffer.buf: width*height wire-order RGB565 px
+    uint16_t *fb;        // typed view of buffer.buf: width*height RGB565 px (order per flag)
     int width;
     int height;
+    bool native_rgb565;  // false = wire-order (default); true = each finished region is
+                         // byte-swapped to NATIVE RGB565 (picodvi / canvas scanout targets)
 } picogame_framebuffer_obj_t;
 
 // Full-frame RAM-framebuffer backend: same layered compositor as the SPI strip path
@@ -184,7 +186,7 @@ typedef struct {
 // [x0,y0,x1,y1) is the region to (re)composite (clamped to the framebuffer). Returns a
 // latched StripDraw BaseException for the caller to re-raise, or MP_OBJ_NULL.
 mp_obj_t picogame_render_framebuffer(
-    uint16_t *fb, int fb_stride, int fb_h,
+    uint16_t *fb, int fb_stride, int fb_h, bool native_rgb565,
     mp_obj_t *items, uint8_t *kinds, size_t n,
     int x0, int y0, int x1, int y1,
     uint16_t background, int ox, int oy);

@@ -827,7 +827,7 @@ void picogame_render(
 // Returns a latched BaseException raised by a StripDraw callback (the caller re-raises
 // it), or MP_OBJ_NULL - the SAME contract as the strip path, minus the bus to close.
 mp_obj_t picogame_render_framebuffer(
-    uint16_t *fb, int fb_stride, int fb_h,
+    uint16_t *fb, int fb_stride, int fb_h, bool native_rgb565,
     mp_obj_t *items, uint8_t *kinds, size_t n,
     int x0, int y0, int x1, int y1,
     uint16_t background, int ox, int oy) {
@@ -854,6 +854,16 @@ mp_obj_t picogame_render_framebuffer(
         uint16_t *row = fb + (size_t)sy * (size_t)fb_stride + x0;
         mp_obj_t exc = picogame_blit_strip_layers(
             row, region_w, sy, 1, x0, items, kinds, n, background, ox, oy);
+        // The compositor (blitters, effects, palettes) works in wire order throughout;
+        // a NATIVE target converts each row in place only after it is fully composed.
+        // On a latched exception the row was partially composed in wire order - convert
+        // it too, so the framebuffer is never left half wire / half native (one Cortex
+        // REV16 per pixel; the Scene snapshot wasn't updated, the next refresh repaints).
+        if (native_rgb565) {
+            for (int i = 0; i < region_w; i++) {
+                row[i] = (uint16_t)__builtin_bswap16(row[i]);
+            }
+        }
         if (exc != MP_OBJ_NULL) {
             return exc;   // StripDraw raised a BaseException; caller re-raises (no bus open)
         }

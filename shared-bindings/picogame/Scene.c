@@ -418,7 +418,7 @@ static mp_obj_t scene_refresh_fb(picogame_scene_obj_t *self) {
     }
 
     for (int i = 0; i < nr; i++) {
-        mp_obj_t exc = picogame_render_framebuffer(fbt->fb, fbt->width, fbt->height,
+        mp_obj_t exc = picogame_render_framebuffer(fbt->fb, fbt->width, fbt->height, fbt->native_rgb565,
             self->items, self->kinds, self->count,
             rects[i].x1, rects[i].y1, rects[i].x2, rects[i].y2,
             self->background, self->ox, self->oy);
