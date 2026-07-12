@@ -160,7 +160,9 @@ void picogame_blit_bitmap(
     // value (bad wrap / overflow in game code) would read past the sheet data.
     // Wrap into [0, frames) - cheap and animation-friendly.
     if (bm->frames > 1) {
-        frame %= bm->frames;
+        if (frame >= bm->frames) {    // common case is in range: pay a compare, not a divide
+            frame %= bm->frames;
+        }
     } else {
         frame = 0;
     }
@@ -324,7 +326,9 @@ void picogame_blit_bitmap_scaled(
     }
     int sw = bm->width, sh = bm->height;
     if (bm->frames > 1) {
-        frame %= bm->frames;
+        if (frame >= bm->frames) {    // common case is in range: pay a compare, not a divide
+            frame %= bm->frames;
+        }
     } else {
         frame = 0;
     }
@@ -489,7 +493,9 @@ void picogame_blit_bitmap_affine(
     }
     int sw = bm->width, sh = bm->height;
     if (bm->frames > 1) {
-        frame %= bm->frames;
+        if (frame >= bm->frames) {    // common case is in range: pay a compare, not a divide
+            frame %= bm->frames;
+        }
     } else {
         frame = 0;
     }
@@ -902,6 +908,38 @@ void picogame_render(
 // Bounds are clamped to [0,fb_stride) x [0,fb_h); an empty region is a no-op.
 // Returns a latched BaseException raised by a StripDraw callback (the caller re-raises
 // it), or MP_OBJ_NULL - the SAME contract as the strip path, minus the bus to close.
+// Convert a contiguous run of `n` pixels in place from wire-order to native RGB565.
+// `((v&0x00ff00ff)<<8)|((v&0xff00ff00)>>8)` byte-swaps both halfwords of a 32-bit word at once
+// (GCC lowers it to a single Cortex REV16), so two pixels per word; unrolled x4 (8 px/iter) so the
+// ldr/str stream pipelines on zero-wait SRAM. A run may start at an odd x (partial dirty rect), so
+// peel one leading pixel to keep the word accesses 4-byte aligned (unaligned faults on M0+).
+// Portable + little-endian, so it also serves the WASM native565 canvas target.
+static void picogame_fb_to_native(uint16_t *px, int n) {
+    int i = 0;
+    if (n > 0 && ((uintptr_t)px & 2u) != 0) {
+        px[0] = (uint16_t)__builtin_bswap16(px[0]);
+        i = 1;
+    }
+    int pairs = (n - i) >> 1;
+    uint32_t *w = (uint32_t *)(px + i);
+    int p = 0;
+    for (; p + 4 <= pairs; p += 4) {
+        uint32_t v0 = w[p], v1 = w[p + 1], v2 = w[p + 2], v3 = w[p + 3];
+        w[p] = ((v0 & 0x00ff00ffu) << 8) | ((v0 & 0xff00ff00u) >> 8);
+        w[p + 1] = ((v1 & 0x00ff00ffu) << 8) | ((v1 & 0xff00ff00u) >> 8);
+        w[p + 2] = ((v2 & 0x00ff00ffu) << 8) | ((v2 & 0xff00ff00u) >> 8);
+        w[p + 3] = ((v3 & 0x00ff00ffu) << 8) | ((v3 & 0xff00ff00u) >> 8);
+    }
+    for (; p < pairs; p++) {
+        uint32_t v = w[p];
+        w[p] = ((v & 0x00ff00ffu) << 8) | ((v & 0xff00ff00u) >> 8);
+    }
+    i += pairs << 1;
+    if (i < n) {
+        px[i] = (uint16_t)__builtin_bswap16(px[i]);
+    }
+}
+
 mp_obj_t picogame_render_framebuffer(
     uint16_t *fb, int fb_stride, int fb_h, bool native_rgb565,
     mp_obj_t *items, uint8_t *kinds, size_t n,
@@ -923,42 +961,35 @@ mp_obj_t picogame_render_framebuffer(
         return MP_OBJ_NULL;
     }
     int region_w = x1 - x0;
-    // One strip per row: point buf at (x0, sy) and composite that row span in place.
-    // The compositor takes region_w as its buffer width, so a single-row strip lands
-    // exactly at fb[sy*stride + x0 ..], leaving the rest of the wider row untouched.
+    // The compositor (blitters, effects, palettes) works in wire order throughout; a NATIVE
+    // target is converted in place only after a region is fully composed. On a latched StripDraw
+    // exception the region was partially composed in wire order - convert it anyway so the fb is
+    // never left half wire / half native (the Scene keeps cleared=false until its render loop
+    // finishes, so the refresh after the exception repaints the full frame).
+
+    // Fast path: a FULL-WIDTH region has contiguous rows, so the whole rect IS one valid strip
+    // buffer. Composite it in a SINGLE strip_layers call (h = the whole band) instead of one call
+    // per row - this amortizes all the per-row/per-layer setup (tile-blit dispatch, clip tests,
+    // background fill, and crucially one StripDraw Python callback per band instead of per row)
+    // over the band, and converts the whole contiguous region in one pass. This is the
+    // full-repaint / camera-scroll case (set_view -> cleared=false -> a full-screen dirty rect).
+    if (x0 == 0 && x1 == fb_stride) {
+        uint16_t *base = fb + (size_t)y0 * (size_t)fb_stride;
+        mp_obj_t exc = picogame_blit_strip_layers(
+            base, fb_stride, y0, y1 - y0, 0, items, kinds, n, background, ox, oy);
+        if (native_rgb565) {
+            picogame_fb_to_native(base, (y1 - y0) * fb_stride);
+        }
+        return exc;   // MP_OBJ_NULL on success, else a latched StripDraw exception
+    }
+
+    // Partial-width region: rows are non-contiguous, so composite (and convert) row by row.
     for (int sy = y0; sy < y1; sy++) {
         uint16_t *row = fb + (size_t)sy * (size_t)fb_stride + x0;
         mp_obj_t exc = picogame_blit_strip_layers(
             row, region_w, sy, 1, x0, items, kinds, n, background, ox, oy);
-        // The compositor (blitters, effects, palettes) works in wire order throughout;
-        // a NATIVE target converts each row in place only after it is fully composed.
-        // On a latched exception the row was partially composed in wire order - convert
-        // it too, so the framebuffer is never left half wire / half native (the Scene keeps
-        // cleared=false until its render loop finishes, so the refresh after the exception
-        // repaints the full frame).
-        //
-        // Swap two pixels per 32-bit word: `((v&0x00ff00ff)<<8)|((v&0xff00ff00)>>8)` byte-swaps
-        // both halfwords of the word at once, which GCC lowers to a single Cortex REV16 - about
-        // half the work of a per-pixel bswap16 on a full-screen repaint (measured ~3.1 -> ~1.6 ms
-        // for 320x240 on RP2350 @150 MHz). A dirty rect may start at an odd x, so peel one leading
-        // pixel to keep the word accesses 4-byte aligned (unaligned would fault on M0+). Portable:
-        // works for the WASM native565 canvas target too (both hosts little-endian).
         if (native_rgb565) {
-            int i = 0;
-            if (((uintptr_t)row & 2u) != 0) {
-                row[0] = (uint16_t)__builtin_bswap16(row[0]);
-                i = 1;
-            }
-            int pairs = (region_w - i) >> 1;
-            uint32_t *w = (uint32_t *)(row + i);
-            for (int p = 0; p < pairs; p++) {
-                uint32_t v = w[p];
-                w[p] = ((v & 0x00ff00ffu) << 8) | ((v & 0xff00ff00u) >> 8);
-            }
-            i += pairs << 1;
-            if (i < region_w) {
-                row[i] = (uint16_t)__builtin_bswap16(row[i]);
-            }
+            picogame_fb_to_native(row, region_w);
         }
         if (exc != MP_OBJ_NULL) {
             return exc;   // StripDraw raised a BaseException; caller re-raises (no bus open)
