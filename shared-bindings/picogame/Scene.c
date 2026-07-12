@@ -419,6 +419,22 @@ static mp_obj_t scene_refresh_fb(picogame_scene_obj_t *self) {
         return mp_const_none;
     }
 
+    // Before compositing a full repaint or a LARGE region, invoke the framebuffer's optional sync
+    // hook (e.g. picodvi wait_for_vblank) so the repaint starts at a frame boundary and races ahead
+    // of scanout instead of tearing mid-screen. Small sprite-only rects skip it - the wait would
+    // only add latency with nothing to tear. `!self->cleared` is the full-repaint signal (set_view()
+    // clears it on a camera move), which catches a camera move even when the play area is < half the
+    // screen (big HUD/margins) and the area test alone would miss it.
+    if (fbt->sync != mp_const_none) {
+        int area = 0;
+        for (int i = 0; i < nr; i++) {
+            area += (rects[i].x2 - rects[i].x1) * (rects[i].y2 - rects[i].y1);
+        }
+        if (!self->cleared || area * 2 >= w * h) {   // full repaint (e.g. camera move) or >= half
+            mp_call_function_0(fbt->sync);
+        }
+    }
+
     // Snapshots are already advanced; stay in the needs-full-repaint state until the
     // render completes, so a BaseException mid-render (Ctrl-C in a StripDraw) leaves a
     // scene whose NEXT refresh repaints everything instead of keeping a torn frame.

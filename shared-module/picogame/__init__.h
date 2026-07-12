@@ -178,6 +178,9 @@ typedef struct {
     int height;
     bool native_rgb565;  // false = wire-order (default); true = each finished region is
                          // byte-swapped to NATIVE RGB565 (picodvi / canvas scanout targets)
+    mp_obj_t sync;       // optional 0-arg callable, invoked BEFORE compositing a large/full-screen
+                         // region (e.g. picodvi Framebuffer.wait_for_vblank) so a full repaint
+                         // starts at a frame boundary and does not tear; mp_const_none = no sync
 } picogame_framebuffer_obj_t;
 
 // Full-frame RAM-framebuffer backend: same layered compositor as the SPI strip path
