@@ -652,19 +652,30 @@ mp_obj_t picogame_blit_strip_layers(
     if (background == 0) {
         memset(buf, 0, (size_t)npix * 2);            // common case (black/clear) -> fast bulk clear
     } else {
-        // word-fill: two packed pixels per uint32 (half the stores). The strip buffer is a
-        // GC-allocated buffer (>=4-byte aligned), so the cast is safe; -Wcast-align can't see that.
+        // word-fill: two packed pixels per uint32 (half the stores). CAUTION: this composites into
+        // BOTH a GC strip buffer (SPI path, >=4-byte aligned) AND, on framebuffer targets, a raw row
+        // pointer fb + sy*stride + x0 that starts at an ODD pixel when x0 is odd -> only 2-byte
+        // aligned. GCC lowers the fill to STRD/STM, which raise an unaligned UsageFault on Cortex-M
+        // even with CCR.UNALIGN_TRP clear (STRD/STM always require word alignment). So peel one
+        // leading pixel to reach 4-byte alignment (mirrors picogame_fb_to_native), bulk word-fill,
+        // then an odd trailing pixel.
+        uint32_t w = (uint32_t)background | ((uint32_t)background << 16);
+        int i = 0;
+        if (npix > 0 && ((uintptr_t)buf & 2u) != 0) {
+            buf[0] = background;
+            i = 1;
+        }
         #pragma GCC diagnostic push
         #pragma GCC diagnostic ignored "-Wcast-align"
-        uint32_t w = (uint32_t)background | ((uint32_t)background << 16);
-        uint32_t *w32 = (uint32_t *)buf;
+        uint32_t *w32 = (uint32_t *)(buf + i);       // now 4-byte aligned
         #pragma GCC diagnostic pop
-        int nw = npix >> 1;
-        for (int i = 0; i < nw; i++) {
-            w32[i] = w;
+        int nw = (npix - i) >> 1;
+        for (int k = 0; k < nw; k++) {
+            w32[k] = w;
         }
-        if (npix & 1) {                              // odd tail pixel
-            buf[npix - 1] = background;
+        i += nw << 1;
+        if (i < npix) {                              // odd trailing pixel
+            buf[i] = background;
         }
     }
     for (size_t i = 0; i < n; i++) {
