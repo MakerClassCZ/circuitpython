@@ -914,10 +914,33 @@ void picogame_render(
 // ldr/str stream pipelines on zero-wait SRAM. A run may start at an odd x (partial dirty rect), so
 // peel one leading pixel to keep the word accesses 4-byte aligned (unaligned faults on M0+).
 // Portable + little-endian, so it also serves the WASM native565 canvas target.
+// Emulated full-screen invert for framebuffer targets (RP2350 DVI, the WASM playground) that lack a
+// panel's hardware INVON/INVOFF: a flag XORed into the wire->native conversion below, so composited
+// pixels come out as their negative. Toggling it (picogame_fb_set_invert) latches a one-shot "the
+// whole frame must recomposite" so the flip covers the ENTIRE screen, not just the current dirty
+// rects - mirroring a panel INVON, which flips everything already scanned out. The XOR folds into the
+// existing REV16 byte-swap for ~free (one extra op per word).
+static bool s_fb_invert = false;
+static bool s_fb_invert_dirty = false;
+
+void picogame_fb_set_invert(bool on) {
+    if (on != s_fb_invert) {
+        s_fb_invert = on;
+        s_fb_invert_dirty = true;   // one full-frame recomposite so the flip is global, then latch off
+    }
+}
+
+bool picogame_fb_take_invert_dirty(void) {
+    bool d = s_fb_invert_dirty;
+    s_fb_invert_dirty = false;
+    return d;
+}
+
 static void picogame_fb_to_native(uint16_t *px, int n) {
+    uint32_t inv = s_fb_invert ? 0xFFFFFFFFu : 0u;   // emulated negative flash (0 = normal pass)
     int i = 0;
     if (n > 0 && ((uintptr_t)px & 2u) != 0) {
-        px[0] = (uint16_t)__builtin_bswap16(px[0]);
+        px[0] = (uint16_t)(__builtin_bswap16(px[0]) ^ (uint16_t)inv);
         i = 1;
     }
     int pairs = (n - i) >> 1;
@@ -925,18 +948,18 @@ static void picogame_fb_to_native(uint16_t *px, int n) {
     int p = 0;
     for (; p + 4 <= pairs; p += 4) {
         uint32_t v0 = w[p], v1 = w[p + 1], v2 = w[p + 2], v3 = w[p + 3];
-        w[p] = ((v0 & 0x00ff00ffu) << 8) | ((v0 & 0xff00ff00u) >> 8);
-        w[p + 1] = ((v1 & 0x00ff00ffu) << 8) | ((v1 & 0xff00ff00u) >> 8);
-        w[p + 2] = ((v2 & 0x00ff00ffu) << 8) | ((v2 & 0xff00ff00u) >> 8);
-        w[p + 3] = ((v3 & 0x00ff00ffu) << 8) | ((v3 & 0xff00ff00u) >> 8);
+        w[p] = (((v0 & 0x00ff00ffu) << 8) | ((v0 & 0xff00ff00u) >> 8)) ^ inv;
+        w[p + 1] = (((v1 & 0x00ff00ffu) << 8) | ((v1 & 0xff00ff00u) >> 8)) ^ inv;
+        w[p + 2] = (((v2 & 0x00ff00ffu) << 8) | ((v2 & 0xff00ff00u) >> 8)) ^ inv;
+        w[p + 3] = (((v3 & 0x00ff00ffu) << 8) | ((v3 & 0xff00ff00u) >> 8)) ^ inv;
     }
     for (; p < pairs; p++) {
         uint32_t v = w[p];
-        w[p] = ((v & 0x00ff00ffu) << 8) | ((v & 0xff00ff00u) >> 8);
+        w[p] = (((v & 0x00ff00ffu) << 8) | ((v & 0xff00ff00u) >> 8)) ^ inv;
     }
     i += pairs << 1;
     if (i < n) {
-        px[i] = (uint16_t)__builtin_bswap16(px[i]);
+        px[i] = (uint16_t)(__builtin_bswap16(px[i]) ^ (uint16_t)inv);
     }
 }
 

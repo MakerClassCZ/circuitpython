@@ -147,6 +147,13 @@ void picogame_render_region(
 // Toggle the panel's hardware colour inversion (INVON/INVOFF) - a free full-screen flash.
 void picogame_set_invert(busdisplay_busdisplay_obj_t *display, bool on);
 
+#if CIRCUITPY_PICOGAME_FRAMEBUFFER
+// Emulated invert for a picogame.Framebuffer target (no hardware INVON): set the flag (XORed into the
+// wire->native conversion) and, via take_invert_dirty(), force one whole-frame recomposite on toggle.
+void picogame_fb_set_invert(bool on);
+bool picogame_fb_take_invert_dirty(void);
+#endif
+
 #if CIRCUITPY_PICOGAME_RGB444   // compiled in only on boards that opt into RGB444 (default off)
 // Set panel pixel format (COLMOD): rgb444 -> 12-bit RGB444, else 16-bit RGB565.
 void picogame_set_pixel_format(busdisplay_busdisplay_obj_t *display, bool rgb444);

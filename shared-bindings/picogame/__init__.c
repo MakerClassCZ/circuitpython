@@ -989,6 +989,14 @@ static MP_DEFINE_CONST_FUN_OBJ_3(picogame_rgb565_obj, picogame_rgb565);
 //|     - cheaper than a Fade overlay. ST7789/ST7735 support it."""
 //|     ...
 static mp_obj_t picogame_invert(mp_obj_t display_in, mp_obj_t on_in) {
+    #if CIRCUITPY_PICOGAME_FRAMEBUFFER
+    // A Framebuffer target (RP2350 DVI, the WASM playground) has no hardware INVON/INVOFF -
+    // emulate the flash by XORing the composite (mirrors the Scene/render Framebuffer handling).
+    if (mp_obj_is_type(display_in, &picogame_framebuffer_type)) {
+        picogame_fb_set_invert(mp_obj_is_true(on_in));
+        return mp_const_none;
+    }
+    #endif
     picogame_set_invert(pg_get_display(display_in), mp_obj_is_true(on_in));
     return mp_const_none;
 }

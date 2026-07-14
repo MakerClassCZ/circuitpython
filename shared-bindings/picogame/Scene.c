@@ -413,6 +413,12 @@ static mp_obj_t scene_refresh_fb(picogame_scene_obj_t *self) {
     int w = fbt->width;
     int h = fbt->height;
 
+    // Emulated invert (pg.invert on a Framebuffer) just toggled -> recomposite the WHOLE frame so the
+    // negative flip covers the whole screen, not only this frame's dirty rects (like a panel INVON).
+    if (picogame_fb_take_invert_dirty()) {
+        self->cleared = false;
+    }
+
     picogame_rect_t rects[PICOGAME_MAX_DIRTY_RECTS];
     int nr = scene_collect_dirty_rects(self, w, h, rects);
     if (nr == 0) {
