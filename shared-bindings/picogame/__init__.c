@@ -1087,6 +1087,7 @@ static mp_obj_t picogame_render_fun(size_t n_args, const mp_obj_t *pos_args, mp_
         // Framebuffer target: composite the region straight into it (no strip buffer, no
         // bus). Same compositor as the SPI path; re-raise a latched StripDraw exception.
         mp_obj_t exc = picogame_render_framebuffer(fbt->fb, fbt->width, fbt->height, fbt->native_rgb565,
+            fbt->scratch, fbt->scratch_rows,
             items, kinds, n,
             args[ARG_x0].u_int, args[ARG_y0].u_int, args[ARG_x1].u_int, args[ARG_y1].u_int,
             args[ARG_background].u_int, 0, 0);
@@ -1408,7 +1409,28 @@ static mp_obj_t picogame_framebuffer_make_new(const mp_obj_type_t *type, size_t 
     self->width = width;
     self->height = height;
     self->native_rgb565 = args[ARG_native_rgb565].u_bool;
-    self->sync = mp_const_none;
+    // A LIVE scanout buffer (picodvi/HDMI) is read continuously, so picogame_render_framebuffer
+    // composes each band into this PRIVATE strip and only memcpys the FINISHED band into the fb.
+    // That serves BOTH targets: (a) native -> also byte-swap the strip so the fb never holds wire
+    // (no pink); (b) wire -> no swap, but the off-screen compose still stops the beam from sampling
+    // a half-composited region (background filled, sprite not yet drawn) = no sprite/HUD flicker.
+    // Always allocated for the FB target; the WASM/sim path (read out after present, not live) just
+    // pays a small strip + one memcpy. See PICOGAME_FB_SCRATCH_H.
+    self->scratch_buf = mp_const_none;
+    self->scratch = NULL;
+    self->scratch_rows = 0;
+    {
+        int rows = PICOGAME_FB_SCRATCH_H;
+        if (rows > height) {
+            rows = height;
+        }
+        mp_obj_t sb = mp_obj_new_bytearray_of_zeros((size_t)width * (size_t)rows * 2u);
+        mp_buffer_info_t sbi;
+        mp_get_buffer_raise(sb, &sbi, MP_BUFFER_WRITE);
+        self->scratch_buf = sb;
+        self->scratch = (uint16_t *)sbi.buf;
+        self->scratch_rows = rows;
+    }
     return MP_OBJ_FROM_PTR(self);
 }
 
@@ -1424,27 +1446,9 @@ static mp_obj_t picogame_framebuffer_get_height(mp_obj_t self_in) {
 static MP_DEFINE_CONST_FUN_OBJ_1(picogame_framebuffer_get_height_obj, picogame_framebuffer_get_height);
 MP_PROPERTY_GETTER(picogame_framebuffer_height_obj, (mp_obj_t)&picogame_framebuffer_get_height_obj);
 
-//|     sync: Optional[Callable[[], None]]
-//|     """An optional 0-arg callable invoked right before a large/full-screen region is
-//|     composited (e.g. a picodvi ``Framebuffer.wait_for_vblank``). Lets a full repaint start at a
-//|     frame boundary so it does not tear, with no cost on small (sprite-only) frames. ``None`` = off."""
-static mp_obj_t picogame_framebuffer_get_sync(mp_obj_t self_in) {
-    return ((picogame_framebuffer_obj_t *)MP_OBJ_TO_PTR(self_in))->sync;
-}
-static MP_DEFINE_CONST_FUN_OBJ_1(picogame_framebuffer_get_sync_obj, picogame_framebuffer_get_sync);
-static mp_obj_t picogame_framebuffer_set_sync(mp_obj_t self_in, mp_obj_t value) {
-    ((picogame_framebuffer_obj_t *)MP_OBJ_TO_PTR(self_in))->sync = value;
-    return mp_const_none;
-}
-static MP_DEFINE_CONST_FUN_OBJ_2(picogame_framebuffer_set_sync_obj, picogame_framebuffer_set_sync);
-MP_PROPERTY_GETSET(picogame_framebuffer_sync_obj,
-    (mp_obj_t)&picogame_framebuffer_get_sync_obj,
-    (mp_obj_t)&picogame_framebuffer_set_sync_obj);
-
 static const mp_rom_map_elem_t picogame_framebuffer_locals_dict_table[] = {
     { MP_ROM_QSTR(MP_QSTR_width), MP_ROM_PTR(&picogame_framebuffer_width_obj) },
     { MP_ROM_QSTR(MP_QSTR_height), MP_ROM_PTR(&picogame_framebuffer_height_obj) },
-    { MP_ROM_QSTR(MP_QSTR_sync), MP_ROM_PTR(&picogame_framebuffer_sync_obj) },
 };
 static MP_DEFINE_CONST_DICT(picogame_framebuffer_locals_dict, picogame_framebuffer_locals_dict_table);
 

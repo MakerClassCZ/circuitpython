@@ -171,6 +171,11 @@ void picogame_render(
     uint16_t background);
 
 #if CIRCUITPY_PICOGAME_FRAMEBUFFER
+// Rows per compose band for the tear-free NATIVE framebuffer path: composite+byte-swap into a
+// private scratch strip, then memcpy the finished NATIVE band into the live scanout buffer - so a
+// picodvi/HDMI beam scanning the framebuffer never samples a half-composed WIRE-order region (which
+// would read as byte-swapped / pink). Small band = small scratch (width*this*2 bytes).
+#define PICOGAME_FB_SCRATCH_H 16
 // A render TARGET that is a caller-owned RAM framebuffer (wire-order RGB565), used in
 // place of a BusDisplay for scanout-buffer platforms: the WASM playground (heap
 // buffer read out to a canvas), the desktop sim, and FruitJam (the DVI/HSTX scanout
@@ -185,9 +190,9 @@ typedef struct {
     int height;
     bool native_rgb565;  // false = wire-order (default); true = each finished region is
                          // byte-swapped to NATIVE RGB565 (picodvi / canvas scanout targets)
-    mp_obj_t sync;       // optional 0-arg callable, invoked BEFORE compositing a large/full-screen
-                         // region (e.g. picodvi Framebuffer.wait_for_vblank) so a full repaint
-                         // starts at a frame boundary and does not tear; mp_const_none = no sync
+    mp_obj_t scratch_buf;  // GC-kept bytearray backing `scratch` (NATIVE path only); mp_const_none on wire
+    uint16_t *scratch;     // private compose strip: width*scratch_rows px, or NULL (wire target)
+    int scratch_rows;      // rows in `scratch` (PICOGAME_FB_SCRATCH_H), 0 if none
 } picogame_framebuffer_obj_t;
 
 // Full-frame RAM-framebuffer backend: same layered compositor as the SPI strip path
@@ -197,6 +202,7 @@ typedef struct {
 // latched StripDraw BaseException for the caller to re-raise, or MP_OBJ_NULL.
 mp_obj_t picogame_render_framebuffer(
     uint16_t *fb, int fb_stride, int fb_h, bool native_rgb565,
+    uint16_t *scratch, int scratch_rows,
     mp_obj_t *items, uint8_t *kinds, size_t n,
     int x0, int y0, int x1, int y1,
     uint16_t background, int ox, int oy);

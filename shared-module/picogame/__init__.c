@@ -974,8 +974,35 @@ static void picogame_fb_to_native(uint16_t *px, int n) {
     }
 }
 
+// Fused wire->native byte-swap AND copy in one pass: read `n` wire pixels from `src`, write them
+// NATIVE to `dst` (folding in the emulated invert XOR). Saves the separate in-place swap + memcpy
+// (one whole band read+write) on the full-width publish path. REQUIRES src AND dst 4-byte aligned
+// (the caller uses it only for a contiguous full-width band, where both are).
+static void picogame_fb_to_native_copy(uint16_t *dst, const uint16_t *src, int n) {
+    uint32_t inv = s_fb_invert ? 0xFFFFFFFFu : 0u;
+    int pairs = n >> 1;
+    const uint32_t *s = (const uint32_t *)src;
+    uint32_t *d = (uint32_t *)dst;
+    int p = 0;
+    for (; p + 4 <= pairs; p += 4) {
+        uint32_t v0 = s[p], v1 = s[p + 1], v2 = s[p + 2], v3 = s[p + 3];
+        d[p] = (((v0 & 0x00ff00ffu) << 8) | ((v0 & 0xff00ff00u) >> 8)) ^ inv;
+        d[p + 1] = (((v1 & 0x00ff00ffu) << 8) | ((v1 & 0xff00ff00u) >> 8)) ^ inv;
+        d[p + 2] = (((v2 & 0x00ff00ffu) << 8) | ((v2 & 0xff00ff00u) >> 8)) ^ inv;
+        d[p + 3] = (((v3 & 0x00ff00ffu) << 8) | ((v3 & 0xff00ff00u) >> 8)) ^ inv;
+    }
+    for (; p < pairs; p++) {
+        uint32_t v = s[p];
+        d[p] = (((v & 0x00ff00ffu) << 8) | ((v & 0xff00ff00u) >> 8)) ^ inv;
+    }
+    if (n & 1) {
+        dst[n - 1] = (uint16_t)(__builtin_bswap16(src[n - 1]) ^ (uint16_t)inv);
+    }
+}
+
 mp_obj_t picogame_render_framebuffer(
     uint16_t *fb, int fb_stride, int fb_h, bool native_rgb565,
+    uint16_t *scratch, int scratch_rows,
     mp_obj_t *items, uint8_t *kinds, size_t n,
     int x0, int y0, int x1, int y1,
     uint16_t background, int ox, int oy) {
@@ -995,6 +1022,51 @@ mp_obj_t picogame_render_framebuffer(
         return MP_OBJ_NULL;
     }
     int region_w = x1 - x0;
+
+    // Tear-free NATIVE path: the framebuffer is a LIVE scanout buffer (picodvi/HDMI reads it
+    // continuously), so it must NEVER transiently hold wire-order pixels - a beam sampling a
+    // half-composed region would read byte-swapped bytes (R/B swapped -> pink). Compose+byte-swap
+    // into a PRIVATE scratch strip, then memcpy the finished NATIVE band into the fb; the fb only
+    // ever receives fully-native runs. Any residual seam is old-vs-new NATIVE content (a plain
+    // single-buffer tear, no colour shift) - reduced by the caller's optional vblank sync. Bands of
+    // scratch_rows keep the scratch small. (Wire targets / no scratch fall through to the direct
+    // path below, which is correct because a wire fb needs no conversion.)
+    if (scratch != NULL && scratch_rows > 0) {
+        // Full-width band: rows are contiguous in BOTH scratch and fb, so the whole band publishes in
+        // one pass with 4-byte-aligned pointers (fb_stride even). Partial-width rows are strided.
+        bool full_width = (x0 == 0 && region_w == fb_stride);
+        for (int by = y0; by < y1; by += scratch_rows) {
+            int bh = (y1 - by) < scratch_rows ? (y1 - by) : scratch_rows;
+            // Compose region_w x bh OFF-SCREEN into the scratch (wire order) so the beam never sees a
+            // half-composited region (no sprite/HUD flicker), then publish the FINISHED band into the
+            // fb. Published even on a latched exception so the fb is never left half-updated.
+            mp_obj_t exc = picogame_blit_strip_layers(
+                scratch, region_w, by, bh, x0, items, kinds, n, background, ox, oy);
+            if (full_width) {
+                uint16_t *dst = fb + (size_t)by * (size_t)fb_stride;
+                size_t npix = (size_t)region_w * (size_t)bh;
+                if (native_rgb565) {
+                    // Fold the wire->native byte-swap INTO the publish copy (no separate in-place swap).
+                    picogame_fb_to_native_copy(dst, scratch, (int)npix);
+                } else {
+                    memcpy(dst, scratch, npix * 2u);   // wire target: HW reads as-is
+                }
+            } else {
+                // Partial-width: swap the scratch in place (NATIVE), then copy row by row (strided).
+                if (native_rgb565) {
+                    picogame_fb_to_native(scratch, region_w * bh);
+                }
+                for (int r = 0; r < bh; r++) {
+                    memcpy(fb + (size_t)(by + r) * fb_stride + x0,
+                        scratch + (size_t)r * region_w, (size_t)region_w * 2u);
+                }
+            }
+            if (exc != MP_OBJ_NULL) {
+                return exc;   // StripDraw raised; caller re-raises (cleared stays false -> full repaint)
+            }
+        }
+        return MP_OBJ_NULL;
+    }
     // The compositor (blitters, effects, palettes) works in wire order throughout; a NATIVE
     // target is converted in place only after a region is fully composed. On a latched StripDraw
     // exception the region was partially composed in wire order - convert it anyway so the fb is
