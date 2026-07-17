@@ -56,12 +56,12 @@ bool picogame_dirty_take(int32_t *r, int *x1, int *y1, int *x2, int *y2) {
 
 // Halve each RGB565 channel of a wire-order pixel (50% darken, for shadow mode).
 static inline uint16_t picogame_darken(uint16_t wire) {
-    uint16_t c = (uint16_t)((wire >> 8) | (wire << 8));
-    uint16_t r = ((c >> 11) & 0x1f) >> 1;
-    uint16_t g = ((c >> 5) & 0x3f) >> 1;
-    uint16_t b = (c & 0x1f) >> 1;
-    uint16_t o = (uint16_t)((r << 11) | (g << 5) | b);
-    return (uint16_t)((o >> 8) | (o << 8));
+    uint16_t c = (uint16_t)((wire >> 8) | (wire << 8));   // wire -> native RGB565
+    // Halve all three channels at once: >>1 shifts every channel right; the 0x7BEF mask clears the two
+    // bits that would bleed across channel boundaries (R's LSB into G's MSB, G's LSB into B's MSB) +
+    // R's now-0 top bit. Bit-identical to the per-channel r>>1/g>>1/b>>1 above, ~half the instructions.
+    uint16_t o = (uint16_t)((c >> 1) & 0x7BEF);
+    return (uint16_t)((o >> 8) | (o << 8));               // native -> wire
 }
 
 // 4x4 ordered (Bayer) dither thresholds, 0..15.
@@ -112,7 +112,32 @@ static inline void picogame_fx_put(uint16_t *dst, uint16_t src, int x, int y, co
     }
 }
 
-static inline bool src_pixel(const picogame_bitmap_obj_t *bm, int srow, int sx, uint16_t *out);
+// Fetch one source pixel from HOISTED scalars: the caller lifts format/data/palette/transparency
+// out of the bitmap struct ONCE before its loop, so this does no per-pixel reload of bm fields (a
+// `*dst` uint16_t store would otherwise force GCC to reload bm's uint16_t members every pixel). `idx`
+// is the linear source offset (srow + sx). Returns false on the transparent key. Used by the scaled /
+// affine / transpose paths; the unscaled fast path inlines the read directly.
+static inline bool src_pixel_s(int format, const uint8_t *data, const uint16_t *pal,
+    bool transp, uint16_t key, int idx, uint16_t *out) {
+    if (format == PICOGAME_FMT_PAL8) {
+        uint8_t i = data[idx];
+        if (transp && i == (uint8_t)key) {
+            return false;
+        }
+        *out = pal[i];                           // indices must be < palette length (see blit contract)
+        return true;
+    }
+    // GC buffer is >=4-byte aligned; silence xtensa -Wcast-align (see picogame_blit_bitmap).
+    #pragma GCC diagnostic push
+    #pragma GCC diagnostic ignored "-Wcast-align"
+    uint16_t v = ((const uint16_t *)data)[idx];
+    #pragma GCC diagnostic pop
+    if (transp && v == key) {
+        return false;
+    }
+    *out = v;
+    return true;
+}
 
 void picogame_blit_bitmap(
     uint16_t *buf, int bw, int bh, int ox, int oy,
@@ -120,6 +145,13 @@ void picogame_blit_bitmap(
     bool transpose, const picogame_fx_t *fxm) {
     if (bm == NULL) {
         return;
+    }
+    // Point fxm at a stack copy: its fields (uint16_t color) can't then alias the *dst stores, so the
+    // effect params stay in registers across the pixel loop instead of reloading every pixel.
+    picogame_fx_t fxl;
+    if (fxm != NULL) {
+        fxl = *fxm;
+        fxm = &fxl;
     }
     int sw = bm->width;
     int sh = bm->height;
@@ -146,6 +178,11 @@ void picogame_blit_bitmap(
         if (xs >= xe || ys >= ye) {
             return;
         }
+        int t_fmt = bm->format;                    // hoist bm fields once (see src_pixel_s)
+        const uint8_t *t_data = bm->data;
+        const uint16_t *t_pal = bm->palette;
+        bool t_transp = bm->has_transparent;
+        uint16_t t_key = bm->transparent;
         for (int y = ys; y < ye; y++) {
             int ly = y - dy0;                      // -> source X (0..sw-1)
             int su = fx ? sw - 1 - ly : ly;        // per-row: source column is constant across the row
@@ -155,7 +192,8 @@ void picogame_blit_bitmap(
             int svstep = fy ? -1 : 1;
             for (int x = xs; x < xe; x++) {
                 uint16_t val;
-                if (src_pixel(bm, sv * stride0 + frame_col0, su, &val)) {
+                if (src_pixel_s(t_fmt, t_data, t_pal, t_transp, t_key,
+                    sv * stride0 + frame_col0 + su, &val)) {
                     picogame_fx_put(dst, val, x, y, fxm);
                 }
                 dst++;
@@ -243,6 +281,11 @@ void picogame_blit_bitmap(
                 xstep = -1;
             }
             if (fxm == NULL) {                   // plain copy (most sprites): no per-pixel fx branch/call
+                if (!transp && !fx) {            // opaque + not x-flipped: the row is contiguous in
+                    // both src and dst -> one memcpy (dst may be 2-byte aligned; memcpy handles that).
+                    memcpy(dst, &data[srow + sx], (size_t)(x_end - x_start) * 2u);
+                    continue;
+                }
                 #pragma GCC unroll 4   // hot path: unrolling the plain sprite blit is ~6% faster on M0+ (measured), +0.6KB
                 for (int x = x_start; x < x_end; x++) {
                     uint16_t v = data[srow + sx];
@@ -266,28 +309,6 @@ void picogame_blit_bitmap(
     }
 }
 
-// Fetch one source pixel; returns false if transparent. Used by the scaled/affine
-// paths (the unscaled fast path inlines this for speed).
-static inline bool src_pixel(const picogame_bitmap_obj_t *bm, int srow, int sx, uint16_t *out) {
-    if (bm->format == PICOGAME_FMT_PAL8) {
-        uint8_t idx = ((const uint8_t *)bm->data)[srow + sx];
-        if (bm->has_transparent && idx == (uint8_t)bm->transparent) {
-            return false;
-        }
-        *out = bm->palette[idx];                 // indices must be < palette length (see blit contract)
-        return true;
-    }
-    // GC buffer is >=4-byte aligned; silence xtensa -Wcast-align (see picogame_blit_bitmap).
-    #pragma GCC diagnostic push
-    #pragma GCC diagnostic ignored "-Wcast-align"
-    uint16_t v = ((const uint16_t *)bm->data)[srow + sx];
-    #pragma GCC diagnostic pop
-    if (bm->has_transparent && v == bm->transparent) {
-        return false;
-    }
-    *out = v;
-    return true;
-}
 
 void picogame_blit_bitmap_scaled(
     uint16_t *buf, int bw, int bh, int ox, int oy,
@@ -295,6 +316,11 @@ void picogame_blit_bitmap_scaled(
     uint16_t scale, const picogame_fx_t *fxm) {
     if (bm == NULL || scale == 0) {
         return;
+    }
+    picogame_fx_t fxl;                           // stack copy: fields don't alias *dst (see blit_bitmap)
+    if (fxm != NULL) {
+        fxl = *fxm;
+        fxm = &fxl;
     }
     int sw = bm->width, sh = bm->height;
     if (bm->frames > 1) {
@@ -312,6 +338,11 @@ void picogame_blit_bitmap_scaled(
         return;
     }
     int frame_col = frame * sw, stride = bm->stride;
+    int s_fmt = bm->format;                       // hoist bm fields once (see src_pixel_s)
+    const uint8_t *s_data = bm->data;
+    const uint16_t *s_pal = bm->palette;
+    bool s_transp = bm->has_transparent;
+    uint16_t s_key = bm->transparent;
     uint32_t step = ((uint32_t)1 << 24) / scale;     // source px per dest px, 16.16
     // No per-row sy>=sh / per-pixel sx>=sw clamp: with dw=(sd*scale)>>8 and step=floor(2^24/scale),
     // the sampled index ((dw-1)*step)>>16 provably never reaches the source dimension (exhaustively
@@ -332,7 +363,7 @@ void picogame_blit_bitmap_scaled(
                 sx = sw - 1 - sx;
             }
             uint16_t val;
-            if (src_pixel(bm, srow, sx, &val)) {
+            if (src_pixel_s(s_fmt, s_data, s_pal, s_transp, s_key, srow + sx, &val)) {
                 picogame_fx_put(&drow[x - ox], val, x, y, fxm);
             }
         }
@@ -451,6 +482,11 @@ void picogame_blit_bitmap_affine(
     if (bm == NULL) {
         return;
     }
+    picogame_fx_t fxl;                           // stack copy: fields don't alias *dst (see blit_bitmap)
+    if (fxm != NULL) {
+        fxl = *fxm;
+        fxm = &fxl;
+    }
     int sw = bm->width, sh = bm->height;
     if (bm->frames > 1) {
         frame %= bm->frames;
@@ -458,31 +494,50 @@ void picogame_blit_bitmap_affine(
         frame = 0;
     }
     int frame_col = frame * sw, stride = bm->stride;
+    int a_fmt = bm->format;                       // hoist bm fields once (see src_pixel_s)
+    const uint8_t *a_data = bm->data;
+    const uint16_t *a_pal = bm->palette;
+    bool a_transp = bm->has_transparent;
+    uint16_t a_key = bm->transparent;
     int x_start = picogame_imax(minx, ox), y_start = picogame_imax(miny, oy);
     int x_end = picogame_imin(maxx + 1, ox + bw), y_end = picogame_imin(maxy + 1, oy + bh);
     if (x_start >= x_end || y_start >= y_end) {
         return;
     }
-    // 32-bit 16.16 accumulators (cheaper than 64-bit on the M0+, where a 64-bit add is a multi-op
-    // sequence). The peak magnitude pivot<<16 + ic*dx + is*dy stays well within int32 for any sane
-    // sprite on a handheld screen (only >~30x magnification on a 320x240-class display could wrap it,
-    // which never happens). src_pixel bounds-checks iu/iv, so even an out-of-range case is memory-safe
-    // (at worst a mis-sampled pixel), never a crash.
+    // Fold flip_x/flip_y into the inverse map ONCE, so the inner loop samples the FINAL source coord
+    // directly - no per-pixel `sw-1-iu`/`sh-1-iv` and no fx/fy branch (one loop variant, fewer live
+    // values -> fewer register spills). Exact: mirroring u is u'=(sw-1)-u; through the 16.16 floor that
+    // is `((sw-1-pivx)<<16 + 0xFFFF) - (ic*dxf + is*dyf)`, i.e. negate the u steps + bias the pivot by
+    // 0xFFFF (so floor(u') == (sw-1) - floor(u) for every in-range pixel). Bit-identical output.
+    int32_t uxc = ic, uyc = is, upiv = (int32_t)pivx << 16;    // u = upiv + uxc*dxf + uyc*dyf
+    int32_t vxc = -is, vyc = ic, vpiv = (int32_t)pivy << 16;   // v = vpiv + vxc*dxf + vyc*dyf
+    if (fx) {
+        uxc = -ic;
+        uyc = -is;
+        upiv = ((int32_t)(sw - 1 - pivx) << 16) + 0xFFFF;
+    }
+    if (fy) {
+        vxc = is;
+        vyc = -ic;
+        vpiv = ((int32_t)(sh - 1 - pivy) << 16) + 0xFFFF;
+    }
+    // 32-bit 16.16 accumulators (cheaper than 64-bit on the M0+). Peak magnitude stays well within
+    // int32 for any sane sprite on a handheld screen. The bounds check keeps an out-of-range sample
+    // memory-safe (at worst a skipped pixel), never a crash.
     for (int y = y_start; y < y_end; y++) {
         int dyf = y - py;
         int dxf = x_start - px;
-        int32_t uacc = ((int32_t)pivx << 16) + ic * dxf + is * dyf;
-        int32_t vacc = ((int32_t)pivy << 16) - is * dxf + ic * dyf;
+        int32_t uacc = upiv + uxc * dxf + uyc * dyf;
+        int32_t vacc = vpiv + vxc * dxf + vyc * dyf;
         uint16_t *drow = buf + (y - oy) * bw;
         for (int x = x_start; x < x_end; x++) {
-            int iu = uacc >> 16, iv = vacc >> 16;
-            uacc += ic;
-            vacc -= is;
-            if (iu >= 0 && iu < sw && iv >= 0 && iv < sh) {
-                int su = fx ? sw - 1 - iu : iu;
-                int sv = fy ? sh - 1 - iv : iv;
+            int su = uacc >> 16, sv = vacc >> 16;   // already the flipped source coords
+            uacc += uxc;
+            vacc += vxc;
+            if (su >= 0 && su < sw && sv >= 0 && sv < sh) {
                 uint16_t val;
-                if (src_pixel(bm, sv * stride + frame_col, su, &val)) {
+                if (src_pixel_s(a_fmt, a_data, a_pal, a_transp, a_key,
+                    sv * stride + frame_col + su, &val)) {
                     picogame_fx_put(&drow[x - ox], val, x, y, fxm);
                 }
             }
@@ -517,6 +572,10 @@ void picogame_sprite_aabb(const picogame_sprite_obj_t *s, int *x1, int *y1, int 
     *y2 = py + s->xf_maxy + 2;
 }
 
+// TINT on a PAL8 sprite is baked into a stack palette (see blit_sprite) when the palette fits this
+// cap, else it falls back to the per-pixel tint. 64 entries = 128 B of transient stack.
+#define PICOGAME_TINT_PAL_CAP 64
+
 // clip_x/clip_y = the strip buffer's screen origin; vx/vy = view offset added to
 // the sprite's scene position to get its screen position.
 static void blit_sprite(uint16_t *buf, int bw, int bh, int clip_x, int clip_y,
@@ -539,15 +598,32 @@ static void blit_sprite(uint16_t *buf, int bw, int bh, int clip_x, int clip_y,
         fxm.mode = PICOGAME_FX_SHADOW;
     }
     const picogame_fx_t *fxp = (fxm.mode == PICOGAME_FX_NONE) ? NULL : &fxm;
+    // TINT of a PAL8 sprite is a pure function of the palette index -> bake it into a stack palette
+    // ONCE and blit plain, instead of picogame_mul565 per pixel (~4x on tinted PAL8 sprites; the
+    // dominant sprite format). Small palettes only; larger ones keep the per-pixel tint. Transparency
+    // is keyed on the INDEX before the palette lookup, so the (unused) tinted key entry is harmless.
+    picogame_bitmap_obj_t *bmuse = spr->bitmap;
+    picogame_bitmap_obj_t bmtint;
+    uint16_t tpal[PICOGAME_TINT_PAL_CAP];
+    if (fxp != NULL && fxm.mode == PICOGAME_FX_TINT && bmuse != NULL &&
+        bmuse->format == PICOGAME_FMT_PAL8 && bmuse->pal_entries <= PICOGAME_TINT_PAL_CAP) {
+        for (int i = 0; i < bmuse->pal_entries; i++) {
+            tpal[i] = picogame_mul565(bmuse->palette[i], fxm.color);
+        }
+        bmtint = *bmuse;                          // shallow copy; override only the palette
+        bmtint.palette = tpal;
+        bmuse = &bmtint;
+        fxp = NULL;                               // tint now baked in -> plain (fast) blit
+    }
     if (spr->angle == 0 && spr->scale == 256) {
         int tx, ty;
         picogame_sprite_topleft(spr, &tx, &ty);
-        picogame_blit_bitmap(buf, bw, bh, clip_x, clip_y, spr->bitmap,
+        picogame_blit_bitmap(buf, bw, bh, clip_x, clip_y, bmuse,
             tx + vx, ty + vy, spr->frame, fx, fy, tr, fxp);
     } else if (spr->angle == 0) {
         int tx, ty;
         picogame_sprite_topleft(spr, &tx, &ty);
-        picogame_blit_bitmap_scaled(buf, bw, bh, clip_x, clip_y, spr->bitmap,
+        picogame_blit_bitmap_scaled(buf, bw, bh, clip_x, clip_y, bmuse,
             tx + vx, ty + vy, spr->frame, fx, fy, spr->scale, fxp);
     } else {
         sprite_xform_fill(spr);            // once per angle/scale change, not per strip
@@ -555,7 +631,7 @@ static void blit_sprite(uint16_t *buf, int bw, int bh, int clip_x, int clip_y,
         int h = (spr->bitmap != NULL) ? spr->bitmap->height : 0;
         int pivx = ((int)spr->anchor_x * w) >> 8, pivy = ((int)spr->anchor_y * h) >> 8;
         int px = (spr->x >> 8) + vx, py = (spr->y >> 8) + vy;
-        picogame_blit_bitmap_affine(buf, bw, bh, clip_x, clip_y, spr->bitmap,
+        picogame_blit_bitmap_affine(buf, bw, bh, clip_x, clip_y, bmuse,
             px, py, pivx, pivy, spr->frame, fx, fy,
             px + spr->xf_minx, py + spr->xf_miny, px + spr->xf_maxx, py + spr->xf_maxy,
             spr->xf_ic, spr->xf_is, fxp);
