@@ -350,16 +350,42 @@ void picogame_canvas_text(picogame_canvas_obj_t *cv, int x, int y, const char *t
     int fw = f->width, fh = f->height;
     int tpr = sheet->width / fw;            // glyph tiles per atlas row
     int x0 = x;
+    // Hoist the canvas target + read the 1-bpp glyph atlas DIRECTLY (no per-pixel get_pixel/put calls).
+    // Clip each glyph rect to the canvas ONCE, then the inner loop is atlas-bit -> direct store. This is
+    // the per-frame path for StripDraw HUD text (repainted every frame), so it's worth the directness.
+    uint16_t *cdata = cv->data;
+    int cw = cv->w, ch = cv->h;
+    bool onebit = (sheet->bits_per_value == 1);   // terminalio.FONT is 1-bpp; other fonts take the fallback
+    const uint8_t *sdata = (const uint8_t *)sheet->data;
+    int sstride_b = sheet->stride * 4;            // atlas row stride in BYTES (stride counts uint32)
     for (const uint8_t *p = (const uint8_t *)text; *p; p++) {
         uint8_t gi = fontio_builtinfont_get_glyph_index(f, *p);
         if (gi != 0xff) {                   // 0xff = no glyph -> blank advance
             int tx = (gi % tpr) * fw, ty = (gi / tpr) * fh;
-            for (int gy = 0; gy < fh; gy++) {
-                for (int gx = 0; gx < fw; gx++) {
-                    if (common_hal_displayio_bitmap_get_pixel(sheet, tx + gx, ty + gy)) {
-                        put(cv, x + gx, y + gy, fg);
-                    } else if (has_bg) {
-                        put(cv, x + gx, y + gy, bg);
+            int gx0 = (x < 0) ? -x : 0;                     // clip the glyph rect to the canvas once
+            int gx1 = (x + fw > cw) ? cw - x : fw;
+            int gy0 = (y < 0) ? -y : 0;
+            int gy1 = (y + fh > ch) ? ch - y : fh;
+            for (int gy = gy0; gy < gy1; gy++) {
+                uint16_t *drow = cdata + (y + gy) * cw + x;   // dst; index by gx (x+gx is in-bounds)
+                int sy = ty + gy;
+                if (onebit) {
+                    const uint8_t *srow = sdata + (size_t)sy * sstride_b;
+                    for (int gx = gx0; gx < gx1; gx++) {
+                        int sx = tx + gx;
+                        if ((srow[sx >> sheet->x_shift] >> (sheet->x_mask - (sx & sheet->x_mask))) & sheet->bitmask) {
+                            drow[gx] = fg;
+                        } else if (has_bg) {
+                            drow[gx] = bg;
+                        }
+                    }
+                } else {
+                    for (int gx = gx0; gx < gx1; gx++) {
+                        if (common_hal_displayio_bitmap_get_pixel(sheet, tx + gx, sy)) {
+                            drow[gx] = fg;
+                        } else if (has_bg) {
+                            drow[gx] = bg;
+                        }
                     }
                 }
             }
