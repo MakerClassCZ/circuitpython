@@ -1041,7 +1041,7 @@ msgstr ""
 #: ports/espressif/common-hal/sdioio/SDCard.c
 #: ports/raspberrypi/common-hal/sdioio/SDCard.c
 #: ports/stm/common-hal/sdioio/SDCard.c shared-bindings/floppyio/__init__.c
-#: shared-module/sdcardio/SDCard.c
+#: shared-bindings/picogame/Canvas.c shared-module/sdcardio/SDCard.c
 #, c-format
 msgid "Buffer must be a multiple of %d bytes"
 msgstr ""
@@ -1470,6 +1470,7 @@ msgid "Requested resource not found"
 msgstr ""
 
 #: ports/espressif/common-hal/espidf/__init__.c
+#: ports/raspberrypi/common-hal/picogame/Display.c
 msgid "Operation or feature not supported"
 msgstr ""
 
@@ -1562,6 +1563,15 @@ msgstr ""
 #: ports/espressif/common-hal/sdioio/SDCard.c
 #, c-format
 msgid "Number of data_pins must be %d or %d, not %d"
+msgstr ""
+
+#: ports/espressif/common-hal/picogame/Display.c
+msgid "rgb444 fast Display not supported on this port yet"
+msgstr ""
+
+#: ports/espressif/common-hal/picogame/Display.c
+#: ports/raspberrypi/common-hal/picogame/Display.c
+msgid "fast Display needs a FourWire SPI display"
 msgstr ""
 
 #: ports/espressif/common-hal/pulseio/PulseIn.c
@@ -1807,9 +1817,9 @@ msgstr ""
 
 #: ports/raspberrypi/bindings/cyw43/__init__.c py/argcheck.c py/objexcept.c
 #: shared-bindings/bitmapfilter/__init__.c shared-bindings/canio/CAN.c
-#: shared-bindings/digitalio/Pull.c shared-bindings/supervisor/__init__.c
-#: shared-module/audiofilters/Filter.c shared-module/displayio/__init__.c
-#: shared-module/synthio/Synthesizer.c
+#: shared-bindings/digitalio/Pull.c shared-bindings/picogame/__init__.c
+#: shared-bindings/supervisor/__init__.c shared-module/audiofilters/Filter.c
+#: shared-module/displayio/__init__.c shared-module/synthio/Synthesizer.c
 msgid "%q must be of type %q or %q, not %q"
 msgstr ""
 
@@ -2860,7 +2870,9 @@ msgstr ""
 msgid "schedule queue full"
 msgstr ""
 
-#: py/modstruct.c shared-module/struct/__init__.c
+#: py/modstruct.c shared-bindings/picogame/Canvas.c
+#: shared-bindings/picogame/__init__.c shared-module/picogame/__init__.c
+#: shared-module/struct/__init__.c
 msgid "buffer too small"
 msgstr ""
 
@@ -4076,6 +4088,60 @@ msgstr ""
 msgid "Specify exactly one of data0 or data_pins"
 msgstr ""
 
+#: shared-bindings/picogame/Display.c shared-bindings/picogame/Scene.c
+#: shared-bindings/picogame/__init__.c
+msgid "expected a BusDisplay"
+msgstr ""
+
+#: shared-bindings/picogame/Display.c
+msgid "sprites must be Sprites"
+msgstr ""
+
+#: shared-bindings/picogame/Scene.c shared-bindings/picogame/__init__.c
+msgid "expected a Sprite, Tilemap, Particles, Canvas or StripDraw"
+msgstr ""
+
+#: shared-bindings/picogame/Scene.c
+msgid "scene full"
+msgstr ""
+
+#: shared-bindings/picogame/Scene.c
+msgid "item not in scene"
+msgstr ""
+
+#: shared-bindings/picogame/__init__.c shared-module/msgpack/__init__.c
+#: supervisor/shared/settings.c
+msgid "Invalid format"
+msgstr ""
+
+#: shared-bindings/picogame/__init__.c
+msgid "bitmap too large"
+msgstr ""
+
+#: shared-bindings/picogame/__init__.c
+msgid "stride too small"
+msgstr ""
+
+#: shared-bindings/picogame/__init__.c
+msgid "PAL8 needs a palette"
+msgstr ""
+
+#: shared-bindings/picogame/__init__.c
+msgid "palette is empty"
+msgstr ""
+
+#: shared-bindings/picogame/__init__.c
+msgid "anchor must be (x, y)"
+msgstr ""
+
+#: shared-bindings/picogame/__init__.c
+msgid "collide takes 6 or 8 args"
+msgstr ""
+
+#: shared-bindings/picogame/__init__.c
+msgid "native_rgb565 and rgb332 are exclusive"
+msgstr ""
+
 #: shared-bindings/ps2io/Ps2.c
 msgid "Failed sending command."
 msgstr ""
@@ -4393,10 +4459,6 @@ msgstr ""
 
 #: shared-module/msgpack/__init__.c
 msgid "no default packer"
-msgstr ""
-
-#: shared-module/msgpack/__init__.c supervisor/shared/settings.c
-msgid "Invalid format"
 msgstr ""
 
 #: shared-module/paralleldisplaybus/ParallelBus.c
