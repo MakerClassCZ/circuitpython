@@ -38,9 +38,11 @@ typedef struct {
     mp_obj_t callback;       // draw(view, vx, vy, vw, vh): vx/vy = screen origin of view (0,0)
     mp_obj_t view;           // a reused picogame_canvas_obj_t (data repointed each strip)
     int32_t x, y, w, h;      // scene rect (int32: scene coords, big-world safe)
+    int32_t dx1, dy1, dx2, dy2;  // accumulated dirty rect (scene coords) when !always_dirty - the same
+    // picogame_dirty_* accumulator Canvas/Tilemap use, so invalidate() can mark
+    // a sub-rect and the Scene repaints only that region (not the whole layer).
     bool faulted;
-    bool always_dirty;       // True: repaint every frame (animated). False: only when pending (UI on-change).
-    bool pending;            // invalidate()d since last take_dirty -> repaint once (used when !always_dirty)
+    bool always_dirty;       // True: repaint every frame (animated). False: only the dirty rect (on-change UI).
 } picogame_stripdraw_obj_t;
 
 static inline int picogame_imin(int a, int b) {
@@ -182,16 +184,25 @@ void picogame_render(
 // buffer). Holds a WriteableBuffer alive + a typed view of it; allocation is the
 // caller's (a bytearray in WASM, the DVI buffer memoryview on FruitJam), so the engine
 // stays platform-neutral. Scene / render can target this instead of a display.
+// Output pixel format of a picogame.Framebuffer target. The compositor always works in
+// wire-order RGB565; the format only selects the publish conversion.
+enum {
+    PICOGAME_FB_WIRE565 = 0,    // no conversion (WASM playground / sim readout)
+    PICOGAME_FB_NATIVE565 = 1,  // byte-swap to native RGB565 (picodvi 16-bit scanout)
+    PICOGAME_FB_RGB332 = 2,     // quantize to RGB332 bytes (picodvi 8-bit scanout, e.g.
+                                // Fruit Jam 640x480 - its max resolution is 8bpp-only)
+};
+
 typedef struct {
     mp_obj_base_t base;
     mp_obj_t buffer;     // the backing WriteableBuffer (kept alive)
-    uint16_t *fb;        // typed view of buffer.buf: width*height RGB565 px (order per flag)
+    uint16_t *fb;        // typed view of buffer.buf: width*height px - RGB565 (2 B/px) for the
+                         // 565 formats; cast to uint8_t* per-pixel bytes for PICOGAME_FB_RGB332
     int width;
     int height;
-    bool native_rgb565;  // false = wire-order (default); true = each finished region is
-                         // byte-swapped to NATIVE RGB565 (picodvi / canvas scanout targets)
-    mp_obj_t scratch_buf;  // GC-kept bytearray backing `scratch` (NATIVE path only); mp_const_none on wire
-    uint16_t *scratch;     // private compose strip: width*scratch_rows px, or NULL (wire target)
+    uint8_t fmt;         // PICOGAME_FB_* output format (see enum above)
+    mp_obj_t scratch_buf;  // GC-kept bytearray backing `scratch`; mp_const_none if none
+    uint16_t *scratch;     // private compose strip: width*scratch_rows px, or NULL
     int scratch_rows;      // rows in `scratch` (PICOGAME_FB_SCRATCH_H), 0 if none
 } picogame_framebuffer_obj_t;
 
@@ -201,7 +212,7 @@ typedef struct {
 // [x0,y0,x1,y1) is the region to (re)composite (clamped to the framebuffer). Returns a
 // latched StripDraw BaseException for the caller to re-raise, or MP_OBJ_NULL.
 mp_obj_t picogame_render_framebuffer(
-    uint16_t *fb, int fb_stride, int fb_h, bool native_rgb565,
+    uint16_t *fb, int fb_stride, int fb_h, int fmt,
     uint16_t *scratch, int scratch_rows,
     mp_obj_t *items, uint8_t *kinds, size_t n,
     int x0, int y0, int x1, int y1,

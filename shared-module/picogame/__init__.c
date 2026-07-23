@@ -1000,8 +1000,23 @@ static void picogame_fb_to_native_copy(uint16_t *dst, const uint16_t *src, int n
     }
 }
 
+// Wire-order RGB565 -> RGB332 publish copy for 8-bit picodvi scanout targets (RRRGGGBB,
+// the same quantization displayio's ColorConverter uses), folding in the emulated invert.
+// A wire pixel w holds native v byte-swapped: hi(v) = low byte of w, lo(v) = high byte.
+//   R3 = top 3 of R5 = hi & 0xE0;  G3 = top 3 of G6 = (hi & 0x07) << 2;
+//   B2 = top 2 of B5 = (lo >> 3) & 0x03
+static void picogame_fb_to_rgb332_copy(uint8_t *dst, const uint16_t *src, int n) {
+    uint8_t inv = s_fb_invert ? 0xFF : 0x00;
+    for (int i = 0; i < n; i++) {
+        uint16_t w = src[i];
+        uint8_t hi = (uint8_t)w;          // wire low byte = native high byte
+        uint8_t lo = (uint8_t)(w >> 8);
+        dst[i] = (uint8_t)((hi & 0xE0u) | ((hi & 0x07u) << 2) | ((lo >> 3) & 0x03u)) ^ inv;
+    }
+}
+
 mp_obj_t picogame_render_framebuffer(
-    uint16_t *fb, int fb_stride, int fb_h, bool native_rgb565,
+    uint16_t *fb, int fb_stride, int fb_h, int fmt,
     uint16_t *scratch, int scratch_rows,
     mp_obj_t *items, uint8_t *kinds, size_t n,
     int x0, int y0, int x1, int y1,
@@ -1043,17 +1058,26 @@ mp_obj_t picogame_render_framebuffer(
             mp_obj_t exc = picogame_blit_strip_layers(
                 scratch, region_w, by, bh, x0, items, kinds, n, background, ox, oy);
             if (full_width) {
-                uint16_t *dst = fb + (size_t)by * (size_t)fb_stride;
                 size_t npix = (size_t)region_w * (size_t)bh;
-                if (native_rgb565) {
+                if (fmt == PICOGAME_FB_RGB332) {
+                    picogame_fb_to_rgb332_copy(
+                        (uint8_t *)fb + (size_t)by * (size_t)fb_stride, scratch, (int)npix);
+                } else if (fmt == PICOGAME_FB_NATIVE565) {
                     // Fold the wire->native byte-swap INTO the publish copy (no separate in-place swap).
-                    picogame_fb_to_native_copy(dst, scratch, (int)npix);
+                    picogame_fb_to_native_copy(fb + (size_t)by * (size_t)fb_stride, scratch, (int)npix);
                 } else {
-                    memcpy(dst, scratch, npix * 2u);   // wire target: HW reads as-is
+                    memcpy(fb + (size_t)by * (size_t)fb_stride, scratch, npix * 2u);   // wire: HW reads as-is
+                }
+            } else if (fmt == PICOGAME_FB_RGB332) {
+                // Partial-width 8-bit: quantize row by row straight into the byte fb (strided).
+                for (int r = 0; r < bh; r++) {
+                    picogame_fb_to_rgb332_copy(
+                        (uint8_t *)fb + (size_t)(by + r) * (size_t)fb_stride + x0,
+                        scratch + (size_t)r * region_w, region_w);
                 }
             } else {
                 // Partial-width: swap the scratch in place (NATIVE), then copy row by row (strided).
-                if (native_rgb565) {
+                if (fmt == PICOGAME_FB_NATIVE565) {
                     picogame_fb_to_native(scratch, region_w * bh);
                 }
                 for (int r = 0; r < bh; r++) {
@@ -1079,11 +1103,14 @@ mp_obj_t picogame_render_framebuffer(
     // background fill, and crucially one StripDraw Python callback per band instead of per row)
     // over the band, and converts the whole contiguous region in one pass. This is the
     // full-repaint / camera-scroll case (set_view -> cleared=false -> a full-screen dirty rect).
+    // (An RGB332 target never reaches these direct paths: its constructor always allocates
+    // the scratch strip, and the compositor can only write 16-bit wire pixels - composing
+    // in place inside a byte framebuffer would corrupt it.)
     if (x0 == 0 && x1 == fb_stride) {
         uint16_t *base = fb + (size_t)y0 * (size_t)fb_stride;
         mp_obj_t exc = picogame_blit_strip_layers(
             base, fb_stride, y0, y1 - y0, 0, items, kinds, n, background, ox, oy);
-        if (native_rgb565) {
+        if (fmt == PICOGAME_FB_NATIVE565) {
             picogame_fb_to_native(base, (y1 - y0) * fb_stride);
         }
         return exc;   // MP_OBJ_NULL on success, else a latched StripDraw exception
@@ -1094,7 +1121,7 @@ mp_obj_t picogame_render_framebuffer(
         uint16_t *row = fb + (size_t)sy * (size_t)fb_stride + x0;
         mp_obj_t exc = picogame_blit_strip_layers(
             row, region_w, sy, 1, x0, items, kinds, n, background, ox, oy);
-        if (native_rgb565) {
+        if (fmt == PICOGAME_FB_NATIVE565) {
             picogame_fb_to_native(row, region_w);
         }
         if (exc != MP_OBJ_NULL) {

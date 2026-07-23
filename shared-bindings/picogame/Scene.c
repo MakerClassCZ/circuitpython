@@ -430,7 +430,7 @@ static mp_obj_t scene_refresh_fb(picogame_scene_obj_t *self) {
     // scene whose NEXT refresh repaints everything instead of keeping a torn frame.
     self->cleared = false;
     for (int i = 0; i < nr; i++) {
-        mp_obj_t exc = picogame_render_framebuffer(fbt->fb, fbt->width, fbt->height, fbt->native_rgb565,
+        mp_obj_t exc = picogame_render_framebuffer(fbt->fb, fbt->width, fbt->height, fbt->fmt,
             fbt->scratch, fbt->scratch_rows,
             self->items, self->kinds, self->count,
             rects[i].x1, rects[i].y1, rects[i].x2, rects[i].y2,

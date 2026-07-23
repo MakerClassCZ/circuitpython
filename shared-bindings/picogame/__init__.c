@@ -844,7 +844,8 @@ static mp_obj_t picogame_stripdraw_make_new(const mp_obj_type_t *type, size_t n_
     self->h = args[ARG_height].u_int;
     self->faulted = false;
     self->always_dirty = args[ARG_always_dirty].u_bool;
-    self->pending = true;            // render once on first refresh even when always_dirty=False
+    picogame_dirty_reset(&self->dx1);        // render once on first refresh (even when always_dirty=False)
+    picogame_dirty_union(&self->dx1, self->x, self->y, self->x + self->w, self->y + self->h);
     // A buffer-less Canvas reused as the per-strip drawing view: its `data` is
     // repointed at the live strip each blit, so no surface RAM is allocated here.
     picogame_canvas_obj_t *view = mp_obj_malloc(picogame_canvas_obj_t, &picogame_canvas_type);
@@ -928,14 +929,40 @@ static mp_obj_t sd_set_always_dirty(mp_obj_t self_in, mp_obj_t v) {
 static MP_DEFINE_CONST_FUN_OBJ_2(sd_set_always_dirty_obj, sd_set_always_dirty);
 MP_PROPERTY_GETSET(sd_always_dirty_obj, (mp_obj_t)&sd_get_always_dirty_obj, (mp_obj_t)&sd_set_always_dirty_obj);
 
-//|     def invalidate(self) -> None:
-//|         """Mark dirty so the layer repaints on the next refresh. Only needed when
-//|         ``always_dirty=False`` (on-change UI) - call it when the content changes."""
-static mp_obj_t sd_invalidate(mp_obj_t self_in) {
-    ((picogame_stripdraw_obj_t *)MP_OBJ_TO_PTR(self_in))->pending = true;
+//|     def invalidate(self, x: int = 0, y: int = 0, w: int = 0, h: int = 0) -> None:
+//|         """Mark dirty so the layer repaints on the next refresh (only needed when
+//|         ``always_dirty=False``). With no args, the whole layer repaints. Pass a rect in
+//|         VIEW-LOCAL coordinates (the same (0,0)-at-``(vx, vy)`` space the draw callback uses) to
+//|         repaint only that region - like Canvas/Tilemap, the Scene then recomposites and pushes just
+//|         those rows. Repeated calls union; the rect is clamped to the layer."""
+static mp_obj_t sd_invalidate(size_t n_args, const mp_obj_t *args) {
+    picogame_stripdraw_obj_t *self = MP_OBJ_TO_PTR(args[0]);
+    if (n_args >= 5) {                       // (x, y, w, h) in view-local coords -> clamped scene rect
+        int x1 = self->x + mp_obj_get_int(args[1]);
+        int y1 = self->y + mp_obj_get_int(args[2]);
+        int x2 = x1 + mp_obj_get_int(args[3]);
+        int y2 = y1 + mp_obj_get_int(args[4]);
+        if (x1 < self->x) {
+            x1 = self->x;
+        }
+        if (y1 < self->y) {
+            y1 = self->y;
+        }
+        if (x2 > self->x + self->w) {
+            x2 = self->x + self->w;
+        }
+        if (y2 > self->y + self->h) {
+            y2 = self->y + self->h;
+        }
+        if (x2 > x1 && y2 > y1) {
+            picogame_dirty_union(&self->dx1, x1, y1, x2, y2);
+        }
+    } else {                                 // whole layer
+        picogame_dirty_union(&self->dx1, self->x, self->y, self->x + self->w, self->y + self->h);
+    }
     return mp_const_none;
 }
-static MP_DEFINE_CONST_FUN_OBJ_1(sd_invalidate_obj, sd_invalidate);
+static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(sd_invalidate_obj, 1, 5, sd_invalidate);
 
 static const mp_rom_map_elem_t picogame_stripdraw_locals_dict_table[] = {
     { MP_ROM_QSTR(MP_QSTR_x), MP_ROM_PTR(&sd_x_obj) },
@@ -1086,7 +1113,7 @@ static mp_obj_t picogame_render_fun(size_t n_args, const mp_obj_t *pos_args, mp_
     if (fbt != NULL) {
         // Framebuffer target: composite the region straight into it (no strip buffer, no
         // bus). Same compositor as the SPI path; re-raise a latched StripDraw exception.
-        mp_obj_t exc = picogame_render_framebuffer(fbt->fb, fbt->width, fbt->height, fbt->native_rgb565,
+        mp_obj_t exc = picogame_render_framebuffer(fbt->fb, fbt->width, fbt->height, fbt->fmt,
             fbt->scratch, fbt->scratch_rows,
             items, kinds, n,
             args[ARG_x0].u_int, args[ARG_y0].u_int, args[ARG_x1].u_int, args[ARG_y1].u_int,
@@ -1374,31 +1401,39 @@ static MP_DEFINE_CONST_FUN_OBJ_KW(picogame_fbm1d_fx_obj, 1, picogame_fbm1d_fx);
 //| class Framebuffer:
 //|     """A RAM framebuffer render target that a Scene or :py:func:`render` can draw
 //|     into instead of a BusDisplay. ``buffer`` must be a writable buffer of at least
-//|     ``width*height*2`` bytes; the caller owns it (a ``bytearray`` in the browser, the
-//|     DVI scanout buffer on FruitJam). By default the pixels are wire-order RGB565 (the
-//|     engine's internal format); ``native_rgb565=True`` byte-swaps each finished region
-//|     to NATIVE RGB565 in place - the format picodvi / canvas scanout targets expect -
-//|     while assets, palettes and ``rgb565()`` stay wire-order throughout."""
+//|     ``width*height*2`` bytes (``width*height`` for ``rgb332=True``); the caller owns it
+//|     (a ``bytearray`` in the browser, the DVI scanout buffer on FruitJam). By default the
+//|     pixels are wire-order RGB565 (the engine's internal format); ``native_rgb565=True``
+//|     byte-swaps each finished region to NATIVE RGB565 - the format 16-bit picodvi /
+//|     canvas scanout targets expect; ``rgb332=True`` quantizes each finished region to
+//|     RGB332 bytes - the format of 8-bit picodvi scanout (FruitJam 640x480, which the
+//|     hardware only offers at 8bpp). Assets, palettes and ``rgb565()`` stay wire-order
+//|     RGB565 throughout regardless of the output format."""
 //|
 //|     def __init__(self, buffer: WriteableBuffer, width: int, height: int, *,
-//|                  native_rgb565: bool = False) -> None: ...
+//|                  native_rgb565: bool = False, rgb332: bool = False) -> None: ...
 static mp_obj_t picogame_framebuffer_make_new(const mp_obj_type_t *type, size_t n_args,
     size_t n_kw, const mp_obj_t *all_args) {
-    enum { ARG_buffer, ARG_width, ARG_height, ARG_native_rgb565 };
+    enum { ARG_buffer, ARG_width, ARG_height, ARG_native_rgb565, ARG_rgb332 };
     static const mp_arg_t allowed_args[] = {
         { MP_QSTR_buffer, MP_ARG_REQUIRED | MP_ARG_OBJ },
         { MP_QSTR_width, MP_ARG_REQUIRED | MP_ARG_INT },
         { MP_QSTR_height, MP_ARG_REQUIRED | MP_ARG_INT },
         { MP_QSTR_native_rgb565, MP_ARG_KW_ONLY | MP_ARG_BOOL, {.u_bool = false} },
+        { MP_QSTR_rgb332, MP_ARG_KW_ONLY | MP_ARG_BOOL, {.u_bool = false} },
     };
     mp_arg_val_t args[MP_ARRAY_SIZE(allowed_args)];
     mp_arg_parse_all_kw_array(n_args, n_kw, all_args, MP_ARRAY_SIZE(allowed_args), allowed_args, args);
     mp_int_t width = mp_arg_validate_int_range(args[ARG_width].u_int, 1, 4096, MP_QSTR_width);
     mp_int_t height = mp_arg_validate_int_range(args[ARG_height].u_int, 1, 4096, MP_QSTR_height);
+    if (args[ARG_native_rgb565].u_bool && args[ARG_rgb332].u_bool) {
+        mp_raise_ValueError(MP_ERROR_TEXT("native_rgb565 and rgb332 are exclusive"));
+    }
+    bool rgb332 = args[ARG_rgb332].u_bool;
 
     mp_buffer_info_t bi;
     mp_get_buffer_raise(args[ARG_buffer].u_obj, &bi, MP_BUFFER_WRITE);
-    uint64_t need = (uint64_t)width * (uint64_t)height * 2u;
+    uint64_t need = (uint64_t)width * (uint64_t)height * (rgb332 ? 1u : 2u);
     if ((uint64_t)bi.len < need) {
         mp_raise_ValueError(MP_ERROR_TEXT("buffer too small"));
     }
@@ -1408,7 +1443,8 @@ static mp_obj_t picogame_framebuffer_make_new(const mp_obj_type_t *type, size_t 
     self->fb = (uint16_t *)bi.buf;
     self->width = width;
     self->height = height;
-    self->native_rgb565 = args[ARG_native_rgb565].u_bool;
+    self->fmt = rgb332 ? PICOGAME_FB_RGB332
+        : (args[ARG_native_rgb565].u_bool ? PICOGAME_FB_NATIVE565 : PICOGAME_FB_WIRE565);
     // A LIVE scanout buffer (picodvi/HDMI) is read continuously, so picogame_render_framebuffer
     // composes each band into this PRIVATE strip and only memcpys the FINISHED band into the fb.
     // That serves BOTH targets: (a) native -> also byte-swap the strip so the fb never holds wire

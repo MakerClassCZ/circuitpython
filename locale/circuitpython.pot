@@ -3810,6 +3810,10 @@ msgstr ""
 msgid "native yield"
 msgstr ""
 
+#: shared-bindings/picogame/__init__.c
+msgid "native_rgb565 and rgb332 are exclusive"
+msgstr ""
+
 #: extmod/ulab/code/ndarray.c
 msgid "ndarray length overflows"
 msgstr ""

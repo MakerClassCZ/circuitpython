@@ -72,16 +72,20 @@ int picogame_scene_compute_dirty_rects(
             } else if (kind == PICOGAME_KIND_CANVAS) {
                 d = picogame_canvas_take_dirty(MP_OBJ_TO_PTR(items[i]), &tx1, &ty1, &tx2, &ty2);
             } else if (kind == PICOGAME_KIND_STRIPDRAW) {
-                // No retained pixels to diff. always_dirty -> repaint every frame (animated content).
-                // Otherwise repaint only when invalidate()d (pending) - but it STILL re-runs whenever
-                // its rect overlaps another layer's dirty rect, so on-change UI stays correct.
+                // No retained pixels to diff. always_dirty -> repaint the whole rect every frame
+                // (animated content). Otherwise repaint only the accumulated invalidate() rect - the
+                // same take_dirty contract as Canvas/Tilemap, so on-change UI repaints just its region
+                // (and still re-runs when another layer's dirty rect overlaps it).
                 picogame_stripdraw_obj_t *sd = MP_OBJ_TO_PTR(items[i]);
-                tx1 = sd->x;
-                ty1 = sd->y;
-                tx2 = sd->x + sd->w;
-                ty2 = sd->y + sd->h;
-                d = sd->always_dirty || sd->pending;
-                sd->pending = false;
+                if (sd->always_dirty) {
+                    tx1 = sd->x;
+                    ty1 = sd->y;
+                    tx2 = sd->x + sd->w;
+                    ty2 = sd->y + sd->h;
+                    d = true;
+                } else {
+                    d = picogame_dirty_take(&sd->dx1, &tx1, &ty1, &tx2, &ty2);
+                }
             }
             if (d) {
                 ADD_RECT(tx1, ty1, tx2, ty2);
