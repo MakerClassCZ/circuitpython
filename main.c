@@ -84,6 +84,10 @@
 #include "shared-module/keypad/__init__.h"
 #endif
 
+#if CIRCUITPY_AUDIOFILEWRITER
+#include "shared-module/audiofilewriter/AudioFileWriter.h"
+#endif
+
 #if CIRCUITPY_MEMORYMONITOR
 #include "shared-module/memorymonitor/__init__.h"
 #endif
@@ -337,6 +341,9 @@ static void count_strn(void *data, const char *str, size_t len) {
 }
 
 static void cleanup_after_vm(mp_obj_t exception) {
+    // Do any port cleanup needed before anything else, including releasing board buses.
+    reset_port_early();
+
     // Get the traceback of any exception from this run off the heap.
     // MP_OBJ_SENTINEL means "this run does not contribute to traceback storage, don't touch it"
     // MP_OBJ_NULL (=0) means "this run completed successfully, clear any stored traceback"
@@ -394,6 +401,10 @@ static void cleanup_after_vm(mp_obj_t exception) {
 
     #if CIRCUITPY_KEYPAD
     keypad_reset();
+    #endif
+
+    #if CIRCUITPY_AUDIOFILEWRITER
+    audiofilewriter_reset();
     #endif
 
     // Close user-initiated sockets.
@@ -654,7 +665,7 @@ static bool __attribute__((noinline)) run_code_py(safe_mode_t safe_mode, bool *s
         #if CIRCUITPY_ALARM
         if (_exec_result.return_code & PYEXEC_DEEP_SLEEP) {
             const bool awoke_from_true_deep_sleep =
-                common_hal_mcu_processor_get_reset_reason() == RESET_REASON_DEEP_SLEEP_ALARM;
+                common_hal_mcu_processor_get_reset_reason() == MCU_RESET_REASON_DEEP_SLEEP_ALARM;
 
             if (fake_sleeping) {
                 // This waits until a pretend deep sleep alarm occurs. They are set
@@ -789,6 +800,12 @@ static bool __attribute__((noinline)) run_code_py(safe_mode_t safe_mode, bool *s
         #if CIRCUITPY_DISPLAYIO
         common_hal_displayio_auto_primary_display();
         #endif
+        // Undo any preserve_dios.
+        #if CIRCUITPY_ALARM_PRESERVE_DIOS
+        common_hal_alarm_clear_pin_preservations();
+        #endif
+        // Reset pins, as if there was a hard reset.
+        reset_all_pins();
         // Pretend that the next run is the first run, as if we were reset.
         *simulate_reset = true;
     }
@@ -1022,17 +1039,11 @@ int __attribute__((used)) main(void) {
     serial_early_init();
     mp_hal_stdout_tx_str(line_clear);
 
-    // Wait briefly to give a reset window where we'll enter safe mode after the reset.
-    if (get_safe_mode() == SAFE_MODE_NONE) {
-        set_safe_mode(wait_for_safe_mode_reset());
-    }
-
     stack_init();
 
     #if CIRCUITPY_STATUS_BAR
     supervisor_status_bar_init();
     #endif
-
 
     #if !INTERNAL_FLASH_FILESYSTEM
     // Set up anything that might need to get done before we try to use SPI flash
@@ -1048,6 +1059,13 @@ int __attribute__((used)) main(void) {
     // since we haven't run user code yet.
     if (!filesystem_init(get_safe_mode() == SAFE_MODE_NONE, false)) {
         set_safe_mode(SAFE_MODE_NO_CIRCUITPY);
+    }
+
+    // Wait briefly to give a reset window where we'll enter safe mode after the reset.
+    // Do this after mounting the filesystem because settings.toml can contain
+    // CIRCUITPY_SAFE_MODE_DELAY to change the default delay.
+    if (get_safe_mode() == SAFE_MODE_NONE) {
+        set_safe_mode(wait_for_safe_mode_reset());
     }
 
     #if CIRCUITPY_BLEIO

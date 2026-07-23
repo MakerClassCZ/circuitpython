@@ -4,12 +4,16 @@
 //
 // SPDX-License-Identifier: MIT
 
+#include <stdarg.h>
 #include <stddef.h>
+#include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <unistd.h>
 
 #include "supervisor/background_callback.h"
 #include "supervisor/board.h"
+#include "supervisor/linker.h"
 #include "supervisor/port.h"
 
 #include "bindings/rp2pio/StateMachine.h"
@@ -34,10 +38,15 @@
 #include "common-hal/rtc/RTC.h"
 #include "common-hal/busio/UART.h"
 
+#if CIRCUITPY_SDIOIO
+#include "common-hal/sdioio/SDCard.h"
+#endif
+
 #include "supervisor/shared/safe_mode.h"
 #include "supervisor/shared/stack.h"
 #include "supervisor/shared/tick.h"
 
+#include "hardware/structs/scb.h"
 #include "hardware/structs/watchdog.h"
 #include "hardware/gpio.h"
 #include "hardware/uart.h"
@@ -71,6 +80,40 @@
 #include "lib/tlsf/tlsf.h"
 
 critical_section_t background_queue_lock;
+
+// The SDK's panic() lives in flash, but core1 may run with flash access
+// disabled by the MPU (usb_host and picodvi lock it out), where a flash call
+// hard faults before anything is printed. -Wl,--wrap=panic routes every
+// panic here instead: core0 keeps the SDK behavior, core1 halts from RAM.
+// Verified by tools/check_core1_flash_calls.py.
+void __wrap_panic(const char *fmt, ...) __attribute__((noreturn, format(printf, 1, 2)));
+void panic_core0(const char *fmt, va_list args) __attribute__((noreturn, format(printf, 1, 0)));
+
+// Flash-resident; only ever called from core0 (see __wrap_panic). Mirrors
+// the SDK implementation. noinline keeps the flash-calling code out of the
+// RAM-resident wrapper below.
+__attribute__((noinline)) void panic_core0(const char *fmt, va_list args) {
+    puts("\n*** PANIC ***\n");
+    if (fmt) {
+        vprintf(fmt, args);
+        puts("");
+    }
+    _exit(1);
+}
+
+void __not_in_flash_func(__wrap_panic)(const char *fmt, ...) {
+    if (get_core_num() == 0) {
+        va_list args;
+        va_start(args, fmt);
+        panic_core0(fmt, args);
+    }
+    // Flash may be MPU-locked on this core and stdio is core0-only, so the
+    // message is unprintable here. Halt in RAM: a debugger stops at the
+    // breakpoint, otherwise spin.
+    __breakpoint();
+    while (1) {
+    }
+}
 
 extern volatile bool mp_msc_enabled;
 
@@ -380,6 +423,16 @@ safe_mode_t port_init(void) {
     common_hal_rtc_init();
     #endif
 
+    // Send-event-on-pend, so the WFE in port_idle_until_interrupt wakes on a
+    // pending interrupt (as WFI did) in addition to waking on SEV — including
+    // the SEV core 1 sends via port_wake_main_task() when it queues USB host
+    // work.
+    #if PICO_RP2040
+    scb_hw->scr |= M0PLUS_SCR_SEVONPEND_BITS;
+    #else
+    scb_hw->scr |= M33_SCR_SEVONPEND_BITS;
+    #endif
+
     // For the tick.
     hardware_alarm_claim(0);
     hardware_alarm_set_callback(0, _tick_callback);
@@ -431,6 +484,10 @@ void reset_port(void) {
 
     #if CIRCUITPY_RP2PIO
     reset_rp2pio_statemachine();
+    #endif
+
+    #if CIRCUITPY_SDIOIO
+    sdioio_reset();
     #endif
 
     #if CIRCUITPY_RTC
@@ -555,7 +612,11 @@ void port_idle_until_interrupt(void) {
     if (!background_callback_pending() && !tud_task_event_ready() && !_woken_up) {
         #endif
         __DSB();
-        __WFI();
+        // WFE, not WFI: the event register is sticky, so a SEV from core 1
+        // (port_wake_main_task, e.g. a USB host event) that lands between the
+        // checks above and here still terminates the wait. Pending interrupts
+        // wake it too, via SEVONPEND (set in port_init).
+        __wfe();
     }
     common_hal_mcu_enable_interrupts();
     #else
@@ -574,7 +635,8 @@ void port_idle_until_interrupt(void) {
     if (!background_callback_pending() && !tud_task_event_ready() && !_woken_up) {
         #endif
         __DSB();
-        __WFI();
+        // WFE, not WFI: see the RP2040 branch above.
+        __wfe();
     }
 
     // and restore basepri before reenabling interrupts
@@ -583,6 +645,20 @@ void port_idle_until_interrupt(void) {
 
     restore_interrupts(state);
     #endif
+}
+
+// Called whenever a background callback is queued, including from core 1
+// (which runs the PIO-USB host and posts its events here). SEV is broadcast
+// to both cores and latches in the event register, so it reliably ends the
+// WFE in port_idle_until_interrupt even if it arrives before the WFE starts.
+// Without this, core 0 sleeps through host events for the remainder of a
+// time.sleep(): device removal processing and enumeration stall until the
+// next unrelated wakeup.
+// PLACE_IN_ITCM: core 1 runs with flash execute-never, so this must live in
+// RAM like its background_callback_add_core caller (__sev inlines to a bare
+// instruction).
+void PLACE_IN_ITCM(port_wake_main_task)(void) {
+    __sev();
 }
 
 /**

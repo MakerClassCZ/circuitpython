@@ -404,7 +404,7 @@ bool tud_msc_test_unit_ready_cb(uint8_t lun) {
         return false;
     }
 
-    if (ejected[lun] || eject_once[lun]
+    if (ejected[lun] || eject_once[lun] || (lun == 0 && !storage_usb_enabled())
         #ifdef SDCARD_LUN
         || (lun == SDCARD_LUN && !sdcard_usb_enabled())
         #endif

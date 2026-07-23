@@ -51,7 +51,7 @@ ifeq ($(CIRCUITPY_BLEIO),1)
   ifeq ($(CIRCUITPY_BLE_FILE_SERVICE),1)
     SRC_SUPERVISOR += supervisor/shared/bluetooth/file_transfer.c
   endif
-  ifeq ($(CIRCUITPY_SERIAL_BLE),1)
+  ifeq ($(CIRCUITPY_BLE_SERIAL_SERVICE),1)
     SRC_SUPERVISOR += supervisor/shared/bluetooth/serial.c
   endif
 endif
@@ -127,7 +127,6 @@ ifeq ($(CIRCUITPY_TINYUSB),1)
   SRC_SUPERVISOR += \
     lib/tinyusb/src/class/cdc/cdc_device.c \
     lib/tinyusb/src/device/usbd.c \
-    lib/tinyusb/src/device/usbd_control.c \
     supervisor/shared/usb/usb_desc.c \
     supervisor/shared/usb/usb_device.c \
 
@@ -188,6 +187,8 @@ ifeq ($(CIRCUITPY_TINYUSB),1)
       shared-module/usb_audio/__init__.c \
       shared-bindings/usb_audio/USBMicrophone.c \
       shared-module/usb_audio/USBMicrophone.c \
+      shared-bindings/usb_audio/USBSpeaker.c \
+      shared-module/usb_audio/USBSpeaker.c \
       lib/tinyusb/src/class/audio/audio_device.c \
 
     # The CFG_TUD_AUDIO_* class driver settings are defined in

@@ -229,6 +229,10 @@ DISABLE_WARNINGS = -Wno-cast-align
 CFLAGS += $(INC) -Wtype-limits -Wall -Werror -std=gnu11 -fshort-enums $(BASE_CFLAGS) $(CFLAGS_MOD) $(COPT) $(DISABLE_WARNINGS) -Werror=missing-prototypes -Wold-style-definition
 
 PICO_LDFLAGS = --specs=nosys.specs --specs=nano.specs
+# The SDK's panic() is flash-resident, but core1 may run with flash access
+# disabled by the MPU. Route panics to the RAM-resident __wrap_panic in
+# supervisor/port.c, which halts safely on core1 and prints on core0.
+PICO_LDFLAGS += -Wl,--wrap=panic
 
 # Use toolchain libm if we're not using our own.
 ifndef INTERNAL_LIBM
@@ -557,6 +561,12 @@ SRC_C += \
 
 INC += \
 	-isystem lib/Pico-PIO-USB/src
+
+# Core1 posts USB events while core0 may hold the TinyUSB queue mutex. The
+# contended wait path calls these two flash-resident SDK functions, and core1
+# must not execute from flash. Replace them with RAM-resident implementations
+# in common-hal/usb_host/Port.c on USB host builds only. See issue #11116.
+PICO_LDFLAGS += -Wl,--wrap=best_effort_wfe_or_timeout -Wl,--wrap=time_us_64
 endif
 
 ifeq ($(CIRCUITPY_PICODVI),1)
@@ -578,6 +588,22 @@ $(patsubst %.c,$(BUILD)/%.o,$(SRC_PICODVI))): CFLAGS += -Wno-old-style-definitio
 
 endif
 
+endif
+
+ifeq ($(CIRCUITPY_SDIOIO),1)
+# Vendored Adafruit SdFat PIO SDIO card driver (C++). The common-hal C sources
+# (SDCard.c, __init__.c) are picked up automatically through SRC_COMMON_HAL.
+SRC_SDIOIO_CXX := \
+	common-hal/sdioio/sdfat_pio/SdCard/PioSdio/PioSdioCard.cpp \
+	common-hal/sdioio/sdfat_pio/shim.cpp \
+	common-hal/sdioio/sdfat_pio/cxx_runtime.cpp \
+
+INC += -Icommon-hal/sdioio/sdfat_pio
+
+# The upstream driver body is guarded by ARDUINO_ARCH_RP2040 and was written
+# against the Arduino RP2040 core, so define that macro for it. It is vendored
+# third-party code, so don't fail the build on its warnings.
+$(BUILD)/common-hal/sdioio/sdfat_pio/SdCard/PioSdio/PioSdioCard.o: CXXFLAGS += -DARDUINO_ARCH_RP2040 -Wno-error
 endif
 
 ifeq ($(CIRCUITPY_SSL),1)
@@ -683,6 +709,12 @@ endif
 
 $(patsubst %.S,$(BUILD)/%.o,$(SRC_S_UPPER)): CFLAGS += -Wno-undef
 
+# Derive the C++ flags from the C flags (mirroring the unix port) so the
+# vendored C++ translation unit picks up all the SDK include paths and defines.
+# Strip the C-only options that g++ rejects, and disable exceptions/RTTI to
+# match the firmware's constraints.
+CXXFLAGS += $(filter-out -std=gnu11 -Werror=missing-prototypes -Wold-style-definition -Wstrict-prototypes -Werror-implicit-function-declaration -Wnested-externs,$(CFLAGS)) -std=gnu++17 -fno-exceptions -fno-rtti
+
 OBJ = $(PY_O) $(SUPERVISOR_O) $(addprefix $(BUILD)/, $(SRC_C:.c=.o))
 OBJ += $(addprefix $(BUILD)/, $(SRC_SDK:.c=.o))
 OBJ += $(addprefix $(BUILD)/, $(SRC_COMMON_HAL_SHARED_MODULE_EXPANDED:.c=.o))
@@ -695,6 +727,9 @@ OBJ += $(addprefix $(BUILD)/, $(SRC_S_UPPER:.S=.o))
 OBJ += $(addprefix $(BUILD)/, $(SRC_MOD:.c=.o))
 OBJ += $(BUILD)/boot2_padded_checksummed.o
 OBJ += $(OBJ_MBEDTLS)
+ifeq ($(CIRCUITPY_SDIOIO),1)
+OBJ += $(addprefix $(BUILD)/, $(SRC_SDIOIO_CXX:.cpp=.o))
+endif
 
 $(BUILD)/%.o: $(BUILD)/%.S
 	$(STEPECHO) "CC $<"
@@ -737,6 +772,21 @@ endif
 
 LINKER_SCRIPTS += -Wl,-T,link-$(CHIP_VARIANT_LOWER).ld
 
+# Builds where core1 locks flash out via the MPU and may only execute
+# RAM-resident code: USB host (PIO-USB frame loop), and picodvi on RP2040
+# (TMDS encode loop). Check the linked ELF from each core1 entry point.
+# picodvi's DMA IRQ handler and scanline callback run on core1 but are
+# reached only through registered pointers, so they are extra roots.
+CORE1_CHECK_ROOTS :=
+ifeq ($(CIRCUITPY_USB_HOST),1)
+CORE1_CHECK_ROOTS += --root core1_main
+endif
+ifeq ($(CHIP_VARIANT),RP2040)
+ifeq ($(CIRCUITPY_PICODVI),1)
+CORE1_CHECK_ROOTS += --root core1_main --root dvi_dma1_irq --root core1_scanline_callback
+endif
+endif
+
 ifeq ($(VALID_BOARD),)
 $(BUILD)/firmware.elf: invalid-board
 else
@@ -745,6 +795,10 @@ $(BUILD)/firmware.elf: $(OBJ) $(BOARD_LD) link-$(CHIP_VARIANT_LOWER).ld
 	$(Q)echo $(OBJ) > $(BUILD)/firmware.objs
 	$(Q)echo $(PICO_LDFLAGS) > $(BUILD)/firmware.ldflags
 	$(Q)$(CC) -o $@ $(CFLAGS) @$(BUILD)/firmware.ldflags $(LINKER_SCRIPTS) -Wl,--print-memory-usage -Wl,-Map=$@.map -Wl,-cref -Wl,--gc-sections @$(BUILD)/firmware.objs -Wl,-lc
+ifneq ($(CORE1_CHECK_ROOTS),)
+	$(STEPECHO) "CHECK core1 flash calls"
+	$(Q)$(PYTHON) $(TOP)/tools/check_core1_flash_calls.py $@ $(CORE1_CHECK_ROOTS)
+endif
 endif
 
 $(BUILD)/firmware.bin: $(BUILD)/firmware.elf
