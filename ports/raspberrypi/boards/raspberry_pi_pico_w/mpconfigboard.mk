@@ -39,3 +39,8 @@ CFLAGS += -DCIRCUITPY_FIRMWARE_SIZE='(1536 * 1024)'
 # left empty here and built by boot.py from settings.toml (see picogame-custom_boards).
 CIRCUITPY_PICOGAME = 1
 CIRCUITPY_PICOGAME_FAST_DISPLAY = 1
+
+# The default -O3 overflows FLASH_FIRMWARE by ~3.7 KB once picogame joins the CYW43 WiFi stack (USB
+# host is already off here, as upstream — the Pico W's PIO-USB pins are taken by CYW43). Same -O2 +
+# targeted speed flags the PicoPad board uses: ~170 KB smaller (89% of region), full engine speed.
+OPTIMIZATION_FLAGS = -O2 -funswitch-loops -fpredictive-commoning -fgcse-after-reload -ftree-partial-pre -fsplit-paths
