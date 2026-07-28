@@ -8,6 +8,7 @@
 #include <math.h>
 #include <string.h>
 #include "py/runtime.h"
+#include "shared-module/picogame/pg_compat.h"
 #include "shared-module/picogame/__init__.h"
 #include "shared-module/picogame/Tilemap.h"
 #include "shared-module/picogame/Particles.h"
@@ -117,27 +118,6 @@ static inline void picogame_fx_put(uint16_t *dst, uint16_t src, int x, int y, co
 // `*dst` uint16_t store would otherwise force GCC to reload bm's uint16_t members every pixel). `idx`
 // is the linear source offset (srow + sx). Returns false on the transparent key. Used by the scaled /
 // affine / transpose paths; the unscaled fast path inlines the read directly.
-static inline bool src_pixel_s(int format, const uint8_t *data, const uint16_t *pal,
-    bool transp, uint16_t key, int idx, uint16_t *out) {
-    if (format == PICOGAME_FMT_PAL8) {
-        uint8_t i = data[idx];
-        if (transp && i == (uint8_t)key) {
-            return false;
-        }
-        *out = pal[i];                           // indices must be < palette length (see blit contract)
-        return true;
-    }
-    // GC buffer is >=4-byte aligned; silence xtensa -Wcast-align (see picogame_blit_bitmap).
-    #pragma GCC diagnostic push
-    #pragma GCC diagnostic ignored "-Wcast-align"
-    uint16_t v = ((const uint16_t *)data)[idx];
-    #pragma GCC diagnostic pop
-    if (transp && v == key) {
-        return false;
-    }
-    *out = v;
-    return true;
-}
 
 void picogame_blit_bitmap(
     uint16_t *buf, int bw, int bh, int ox, int oy,
@@ -754,7 +734,7 @@ mp_obj_t picogame_blit_strip_layers(
 }
 
 bool picogame_strip_begin(
-    busdisplay_busdisplay_obj_t *display,
+    picogame_output_t *display,
     int *x0p, int *y0p, int *x1p, int *y1p, size_t buffer_pixels,
     int *region_w, int *strip_h) {
     // Clamp the window to the panel (post-rotation w/h): an out-of-range region makes the controller
@@ -812,8 +792,18 @@ bool picogame_strip_begin(
     return true;
 }
 
+// --- output transport seam (busdisplay backend): the ONLY per-strip display ops the generic
+// picogame_render_region orchestrator below touches, so a non-CircuitPython port (MicroPython
+// framebuf/SPI) swaps just strip_begin + these two + set_invert/set_pixel_format. See __init__.h.
+static inline void picogame_out_strip_send(picogame_output_t *display, const uint8_t *data, size_t nbytes) {
+    display->bus.send(display->bus.bus, DISPLAY_DATA, CHIP_SELECT_UNTOUCHED, data, nbytes);
+}
+static inline void picogame_out_strip_end(picogame_output_t *display) {
+    displayio_display_bus_end_transaction(&display->bus);
+}
+
 void picogame_render_region(
-    busdisplay_busdisplay_obj_t *display,
+    picogame_output_t *display,
     mp_obj_t *items, uint8_t *kinds, size_t n,
     uint16_t *buffer, size_t buffer_pixels,
     int16_t x0, int16_t y0, int16_t x1, int16_t y1,
@@ -827,19 +817,18 @@ void picogame_render_region(
     for (int sy = cy0; sy < cy1; sy += strip_h) {
         int sh = picogame_imin(strip_h, cy1 - sy);
         mp_obj_t exc = picogame_blit_strip_layers(buffer, region_w, sy, sh, cx0, items, kinds, n, background, ox, oy);
-        display->bus.send(display->bus.bus, DISPLAY_DATA,
-            CHIP_SELECT_UNTOUCHED, (uint8_t *)buffer, region_w * sh * 2);
+        picogame_out_strip_send(display, (uint8_t *)buffer, region_w * sh * 2);
         if (exc != MP_OBJ_NULL) {                 // a StripDraw callback raised a BaseException: close the
-            displayio_display_bus_end_transaction(&display->bus);   // bus, then re-raise (Ctrl-C / reload)
+            picogame_out_strip_end(display);      // bus, then re-raise (Ctrl-C / reload)
             nlr_raise(MP_OBJ_TO_PTR(exc));
         }
     }
-    displayio_display_bus_end_transaction(&display->bus);
+    picogame_out_strip_end(display);
 }
 
 // Toggle the panel's hardware colour inversion (INVON 0x21 / INVOFF 0x20). Instant, sends NO
 // pixel data - a brief invert is a free full-screen "flash" (a 1-bit negative hit look).
-void picogame_set_invert(busdisplay_busdisplay_obj_t *display, bool on) {
+void picogame_set_invert(picogame_output_t *display, bool on) {
     uint8_t cmd = on ? 0x21 : 0x20;
     while (!displayio_display_bus_begin_transaction(&display->bus)) {
         RUN_BACKGROUND_TASKS;
@@ -856,7 +845,7 @@ void picogame_set_invert(busdisplay_busdisplay_obj_t *display, bool on) {
 // Set the panel pixel format (COLMOD 0x3A): rgb444 -> 12-bit RGB444 (0x53), else 16-bit RGB565
 // (0x55). Asserting it on every Display construct also recovers from a previous program that left
 // the panel in the other format (survives soft reset).
-void picogame_set_pixel_format(busdisplay_busdisplay_obj_t *display, bool rgb444) {
+void picogame_set_pixel_format(picogame_output_t *display, bool rgb444) {
     uint8_t cmd = 0x3A;
     uint8_t param = rgb444 ? 0x53 : 0x55;
     while (!displayio_display_bus_begin_transaction(&display->bus)) {
@@ -895,7 +884,7 @@ size_t picogame_pack_rgb444(uint16_t *buf, size_t npix) {
 #endif // CIRCUITPY_PICOGAME_RGB444
 
 void picogame_render(
-    busdisplay_busdisplay_obj_t *display,
+    picogame_output_t *display,
     mp_obj_t *items, size_t n,
     uint16_t *buffer, size_t buffer_pixels,
     int16_t x0, int16_t y0, int16_t x1, int16_t y1,

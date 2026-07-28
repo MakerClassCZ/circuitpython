@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 #include "py/runtime.h"
-#include "py/objproperty.h"
+#include "shared-module/picogame/pg_compat.h"
 #include "shared-bindings/picogame/Tilemap.h"
 #include "shared-bindings/picogame/Bitmap.h"
 #include "shared-module/picogame/Tilemap.h"

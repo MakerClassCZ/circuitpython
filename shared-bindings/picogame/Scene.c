@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 #include "py/runtime.h"
-#include "py/objproperty.h"
+#include "shared-module/picogame/pg_compat.h"
 #include "py/objtuple.h"
 #include "py/objlist.h"
 #include "shared-bindings/picogame/Scene.h"

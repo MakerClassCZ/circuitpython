@@ -7,7 +7,7 @@
 // shared-bindings/shared-module .c pair (CircuitPython build convention).
 
 #include "py/runtime.h"
-#include "py/objproperty.h"
+#include "shared-module/picogame/pg_compat.h"
 #include "shared-bindings/busdisplay/BusDisplay.h"
 #include "shared-bindings/picogame/__init__.h"
 #include "shared-bindings/picogame/Bitmap.h"

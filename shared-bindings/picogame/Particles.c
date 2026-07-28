@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 #include "py/runtime.h"
+#include "shared-module/picogame/pg_compat.h"
 #include "shared-bindings/picogame/Particles.h"
 #include "shared-module/picogame/Particles.h"
 

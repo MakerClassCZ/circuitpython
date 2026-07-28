@@ -12,6 +12,31 @@
 #include "shared-module/picogame/Bitmap.h"
 #include "shared-module/picogame/Sprite.h"
 
+// Sample one texel as wire RGB565; false = transparent (skip). Shared by the sprite/canvas
+// blit paths so they inline one copy (see the blit contract: PAL8 indices must be < palette len).
+static inline bool src_pixel_s(int format, const uint8_t *data, const uint16_t *pal,
+    bool transp, uint16_t key, int idx, uint16_t *out) {
+    if (format == PICOGAME_FMT_PAL8) {
+        uint8_t i = data[idx];
+        if (transp && i == (uint8_t)key) {
+            return false;
+        }
+        *out = pal[i];                           // indices must be < palette length (see blit contract)
+        return true;
+    }
+    // GC buffer is >=4-byte aligned; silence xtensa -Wcast-align (see picogame_blit_bitmap).
+    #pragma GCC diagnostic push
+    #pragma GCC diagnostic ignored "-Wcast-align"
+    uint16_t v = ((const uint16_t *)data)[idx];
+    #pragma GCC diagnostic pop
+    if (transp && v == key) {
+        return false;
+    }
+    *out = v;
+    return true;
+}
+
+
 // Scene layer kinds (tags stored alongside items so blit/dirty can dispatch
 // without cross-referencing shared-bindings type objects).
 enum {
@@ -117,6 +142,25 @@ void picogame_blit_bitmap_affine(
     int minx, int miny, int maxx, int maxy, int32_t ic, int32_t is,
     const picogame_fx_t *fxm);
 
+// ===== OUTPUT TRANSPORT SEAM =====================================================
+// picogame's compositor (picogame_blit_strip_layers) is OUTPUT-AGNOSTIC: it composites
+// scene layers into a plain wire-order RGB565 strip buffer, knowing nothing about the
+// destination. A physical display is reached only through the small transport contract
+// below, so a non-CircuitPython port (e.g. a MicroPython framebuf/SPI backend) can reuse
+// the whole compositor AND the generic picogame_render_region orchestrator and reimplement
+// ONLY these few functions. `picogame_output_t` is the opaque display handle they take.
+// (A RAM-framebuffer destination is a separate backend: picogame_render_framebuffer.)
+//
+// Strip-path contract a backend provides:
+//   picogame_strip_begin      - open a window for [x0,y0,x1,y1); return strip geometry
+//   picogame_out_strip_send   - push one composited strip (region_w*sh px, wire RGB565)
+//   picogame_out_strip_end    - close the transaction
+//   picogame_set_invert       - panel hardware colour inversion (a free full-screen flash)
+//   picogame_set_pixel_format - panel COLMOD (RGB565/RGB444), when CIRCUITPY_PICOGAME_RGB444
+//
+// CircuitPython backend: picogame_output_t == busdisplay; the impl lives in __init__.c.
+typedef busdisplay_busdisplay_obj_t picogame_output_t;
+
 // Fill a strip with background, then composite items (sprites and tilemaps) in
 // order (items[0] = bottom). kinds[i] selects the type; kinds == NULL means
 // every item is a sprite. (ox, oy) is the view offset added to item positions
@@ -131,7 +175,7 @@ mp_obj_t picogame_blit_strip_layers(
 // begin transaction, send RAMWR). Returns false if the region is empty; raises
 // if the buffer is too small for the region width. Fills *region_w and *strip_h.
 bool picogame_strip_begin(
-    busdisplay_busdisplay_obj_t *display,
+    picogame_output_t *display,
     int *x0, int *y0, int *x1, int *y1, size_t buffer_pixels,
     int *region_w, int *strip_h);   // clamps *x0..*y1 to the panel in place (caller loops on them)
 
@@ -140,14 +184,14 @@ bool picogame_strip_begin(
 // fast path (kinds + view offset), so it is the cross-port fallback for Scene on
 // targets without the platform DMA Display. `kinds == NULL` => all sprites.
 void picogame_render_region(
-    busdisplay_busdisplay_obj_t *display,
+    picogame_output_t *display,
     mp_obj_t *items, uint8_t *kinds, size_t n,
     uint16_t *buffer, size_t buffer_pixels,
     int16_t x0, int16_t y0, int16_t x1, int16_t y1,
     uint16_t background, int ox, int oy);
 
 // Toggle the panel's hardware colour inversion (INVON/INVOFF) - a free full-screen flash.
-void picogame_set_invert(busdisplay_busdisplay_obj_t *display, bool on);
+void picogame_set_invert(picogame_output_t *display, bool on);
 
 #if CIRCUITPY_PICOGAME_FRAMEBUFFER
 // Emulated invert for a picogame.Framebuffer target (no hardware INVON): set the flag (XORed into the
@@ -158,7 +202,7 @@ bool picogame_fb_take_invert_dirty(void);
 
 #if CIRCUITPY_PICOGAME_RGB444   // compiled in only on boards that opt into RGB444 (default off)
 // Set panel pixel format (COLMOD): rgb444 -> 12-bit RGB444, else 16-bit RGB565.
-void picogame_set_pixel_format(busdisplay_busdisplay_obj_t *display, bool rgb444);
+void picogame_set_pixel_format(picogame_output_t *display, bool rgb444);
 
 // Pack `npix` (even) wire-order RGB565 pixels in `buf` IN-PLACE to 12-bit RGB444; returns bytes.
 size_t picogame_pack_rgb444(uint16_t *buf, size_t npix);
@@ -166,7 +210,7 @@ size_t picogame_pack_rgb444(uint16_t *buf, size_t npix);
 
 // Universal sprite-only convenience wrapper over picogame_render_region.
 void picogame_render(
-    busdisplay_busdisplay_obj_t *display,
+    picogame_output_t *display,
     mp_obj_t *items, size_t n,
     uint16_t *buffer, size_t buffer_pixels,
     int16_t x0, int16_t y0, int16_t x1, int16_t y1,
