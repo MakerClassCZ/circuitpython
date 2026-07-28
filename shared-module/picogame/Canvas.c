@@ -112,6 +112,73 @@ void picogame_canvas_blit(picogame_canvas_obj_t *cv, picogame_bitmap_obj_t *bm,
     mark(cv, x, y, x + bm->width, y + bm->height);
 }
 
+// Number of low zero bits (log2 for a power of 2; 0 for non-pow2, caught by caller).
+static int log2_pow2(unsigned v) {
+    int n = 0;
+    while ((v & 1) == 0 && v > 1) {
+        v >>= 1;
+        n++;
+    }
+    return n;
+}
+
+void picogame_canvas_mode7(picogame_canvas_obj_t *cv, picogame_bitmap_obj_t *tex,
+    int horizon, int y_off, int32_t z, int32_t rx0, int32_t ry0, int32_t rsx, int32_t rsy,
+    int32_t cam_x, int32_t cam_y) {
+    // Perspective ground plane (Mode-7 / floorcaster). For each screen row below
+    // `horizon`, distance = z / (row - horizon) (16.16); the texture-space coord
+    // of the left edge is cam + distance*ray0, stepping by distance*rayDelta per
+    // pixel; sample `tex` (power-of-2, so wrap = a mask, and world 1.0 = one tile
+    // via a shift, no multiply). Integer throughout - no FPU needed (RP2040).
+    if (tex == NULL) {
+        return;
+    }
+    int tw = tex->width, th = tex->height;
+    if ((tw & (tw - 1)) || (th & (th - 1))) {   // require power-of-2 dims
+        return;
+    }
+    int shx = 16 - log2_pow2((unsigned)tw);     // world(1.0) -> one full tile
+    int shy = 16 - log2_pow2((unsigned)th);
+    int mx = tw - 1, my = th - 1, stride = tex->stride;
+    int fmt = tex->format;
+    const uint8_t *data = tex->data;
+    const uint16_t *pal = tex->palette;
+    bool transp = tex->has_transparent;
+    uint16_t key = tex->transparent;
+    // sy is a row WITHIN this surface (a StripDraw view is a Canvas onto one strip);
+    // the absolute screen row is sy + y_off, so the horizon test uses that. y_off = 0
+    // for a full-screen Canvas, = the strip's screen y for a StripDraw view (0-RAM floor).
+    int y0 = horizon - y_off + 1;
+    if (y0 < 0) {
+        y0 = 0;
+    }
+    for (int sy = y0; sy < cv->h; sy++) {
+        int denom = (sy + y_off) - horizon;
+        if (denom <= 0) {
+            continue;
+        }
+        // 32-bit throughout (no 64-bit mul helper on the M0+): rowdist*coeff stays
+        // within int32 for sane camera params - the Python helper keeps z and the
+        // ray deltas small; extreme values degrade to wrong pixels, never a crash.
+        int32_t rowdist = z / denom;
+        int32_t stepx = (rowdist * rsx) >> 16;
+        int32_t stepy = (rowdist * rsy) >> 16;
+        int32_t fx = cam_x + ((rowdist * rx0) >> 16);
+        int32_t fy = cam_y + ((rowdist * ry0) >> 16);
+        uint16_t *drow = cv->data + sy * cv->w;
+        for (int sx = 0; sx < cv->w; sx++) {
+            int tx = (fx >> shx) & mx, ty = (fy >> shy) & my;
+            uint16_t val;
+            if (src_pixel_s(fmt, data, pal, transp, key, ty * stride + tx, &val)) {
+                drow[sx] = val;
+            }
+            fx += stepx;
+            fy += stepy;
+        }
+    }
+    mark(cv, 0, y0, cv->w, cv->h);
+}
+
 void picogame_canvas_rect(picogame_canvas_obj_t *cv, int x, int y, int w, int h, uint16_t color) {
     picogame_canvas_fill_rect(cv, x, y, w, 1, color);
     picogame_canvas_fill_rect(cv, x, y + h - 1, w, 1, color);

@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 #include "py/runtime.h"
-#include "py/objproperty.h"
+#include "shared-module/picogame/pg_compat.h"
 #include "shared-bindings/picogame/Canvas.h"
 #include "shared-bindings/picogame/Bitmap.h"
 #include "shared-bindings/fontio/BuiltinFont.h"
@@ -116,6 +116,23 @@ static mp_obj_t canvas_blit(size_t n, const mp_obj_t *a) {
     return mp_const_none;
 }
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(canvas_blit_obj, 4, 7, canvas_blit);
+
+//|     def mode7(self, texture: Bitmap, horizon: int, y_off: int, z: int, rx0: int,
+//|               ry0: int, rsx: int, rsy: int, cam_x: int, cam_y: int) -> None:
+//|         """Fill rows below `horizon` with a perspective ground plane (Mode-7) of
+//|         `texture` (power-of-2 dims). The int args are 16.16 fixed-point camera
+//|         terms; use the picogame_mode7 helper to compute them from angle/pos/fov."""
+//|         ...
+static mp_obj_t canvas_mode7(size_t n, const mp_obj_t *a) {
+    picogame_bitmap_obj_t *tex = MP_OBJ_TO_PTR(
+        mp_arg_validate_type(a[1], &picogame_bitmap_type, MP_QSTR_texture));
+    picogame_canvas_mode7(cv_self(a[0]), tex,
+        mp_obj_get_int(a[2]), mp_obj_get_int(a[3]), mp_obj_get_int(a[4]),
+        mp_obj_get_int(a[5]), mp_obj_get_int(a[6]), mp_obj_get_int(a[7]),
+        mp_obj_get_int(a[8]), mp_obj_get_int(a[9]), mp_obj_get_int(a[10]));
+    return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(canvas_mode7_obj, 11, 11, canvas_mode7);
 
 //|     def rect(self, x: int, y: int, w: int, h: int, color: int) -> None: ...
 static mp_obj_t canvas_rect(size_t n, const mp_obj_t *a) {
@@ -278,6 +295,7 @@ static const mp_rom_map_elem_t picogame_canvas_locals_dict_table[] = {
     { MP_ROM_QSTR(MP_QSTR_pixel), MP_ROM_PTR(&canvas_pixel_obj) },
     { MP_ROM_QSTR(MP_QSTR_fill_rect), MP_ROM_PTR(&canvas_fill_rect_obj) },
     { MP_ROM_QSTR(MP_QSTR_blit), MP_ROM_PTR(&canvas_blit_obj) },
+    { MP_ROM_QSTR(MP_QSTR_mode7), MP_ROM_PTR(&canvas_mode7_obj) },
     { MP_ROM_QSTR(MP_QSTR_rect), MP_ROM_PTR(&canvas_rect_obj) },
     { MP_ROM_QSTR(MP_QSTR_line), MP_ROM_PTR(&canvas_line_obj) },
     { MP_ROM_QSTR(MP_QSTR_fill_circle), MP_ROM_PTR(&canvas_fill_circle_obj) },

@@ -87,9 +87,7 @@ static mp_obj_t picogame_display_render(size_t n_args, const mp_obj_t *pos_args,
     mp_obj_t *items;
     mp_obj_get_array(args[ARG_sprites].u_obj, &n, &items);
     for (size_t i = 0; i < n; i++) {
-        if (!mp_obj_is_type(items[i], &picogame_sprite_type)) {
-            mp_raise_TypeError(MP_ERROR_TEXT("sprites must be Sprites"));
-        }
+        mp_arg_validate_type(items[i], &picogame_sprite_type, MP_QSTR_sprite);
     }
 
     mp_buffer_info_t ba, bb;
