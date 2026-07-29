@@ -1010,6 +1010,119 @@ static mp_obj_t picogame_rgb565(mp_obj_t r_in, mp_obj_t g_in, mp_obj_t b_in) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_3(picogame_rgb565_obj, picogame_rgb565);
 
+// raycast(map, mw, mh, posx, posy, lrx, lry, srx, sry, sh, stride, ncols, wcolors, top, bot, col, dist)
+// C DDA wall raycaster for picogame_ray.Raycaster - INTEGER ONLY (16.16 fixed-point, no FPU; the paint,
+// temporal invalidate, pose-cache and billboard math stay in Python; Python does the once-per-frame
+// trig and passes Q16 ray params). map: read-only bytes, mw*mh wall types (0 = empty). pos*, l*x/l*y
+// (leftRay, column 0), s*x/s*y (rayStep per column) are all 16.16. wcolors: uint16[(maxtype+1)*2] -
+// [t*2] near, [t*2+1] side colour. top/bot/col: uint16 write buffers (len>=ncols); dist: int32 write
+// buffer (perpendicular distance, 16.16). The int64 divides/muls are ONLY the per-column setup
+// (O(ncols)); the DDA step loop is pure 32-bit. Mirrors the Python float fallback closely.
+static mp_obj_t picogame_raycast(size_t n_args, const mp_obj_t *args) {
+    mp_buffer_info_t mi, wi, ti, bi, ci, di;
+    mp_get_buffer_raise(args[0], &mi, MP_BUFFER_READ);
+    int mw = mp_obj_get_int(args[1]);
+    int mh = mp_obj_get_int(args[2]);
+    int32_t posx = mp_obj_get_int(args[3]);        // camera x, 16.16
+    int32_t posy = mp_obj_get_int(args[4]);
+    int32_t rdx = mp_obj_get_int(args[5]);         // leftRay x (column 0), 16.16 - accumulates per column
+    int32_t rdy = mp_obj_get_int(args[6]);
+    int32_t srx = mp_obj_get_int(args[7]);         // rayStep x per column, 16.16
+    int32_t sry = mp_obj_get_int(args[8]);
+    int sh = mp_obj_get_int(args[9]);
+    int stride = mp_obj_get_int(args[10]);
+    int ncols = mp_obj_get_int(args[11]);
+    mp_get_buffer_raise(args[12], &wi, MP_BUFFER_READ);
+    mp_get_buffer_raise(args[13], &ti, MP_BUFFER_WRITE);
+    mp_get_buffer_raise(args[14], &bi, MP_BUFFER_WRITE);
+    mp_get_buffer_raise(args[15], &ci, MP_BUFFER_WRITE);
+    mp_get_buffer_raise(args[16], &di, MP_BUFFER_WRITE);
+    (void)stride;
+    const uint8_t *map = mi.buf;
+    const uint16_t *wc = wi.buf;
+    int wc_types = (int)(wi.len >> 2);
+    uint16_t *top = ti.buf;
+    uint16_t *bot = bi.buf;
+    uint16_t *col = ci.buf;
+    int32_t *dist_out = di.buf;                    // perpendicular distance, 16.16
+    int half = sh >> 1;
+    int imapx0 = posx >> 16;
+    int imapy0 = posy >> 16;
+    int32_t fracx = posx & 0xFFFF;                 // fractional part of pos, 16.16
+    int32_t fracy = posy & 0xFFFF;
+    const int32_t DD_CAP = (int32_t)1 << 24;       // cap deltaDist so a 64-step accumulation stays in int32
+    if (ncols > (int)(ti.len >> 1)) {
+        ncols = (int)(ti.len >> 1);
+    }
+    for (int c = 0; c < ncols; c++) {
+        int mapx = imapx0;
+        int mapy = imapy0;
+        int32_t ax = rdx < 0 ? -rdx : rdx;
+        int32_t ay = rdy < 0 ? -rdy : rdy;
+        // deltaDist = |1/rayDir| in 16.16 = (1<<32)/|rayDir_q16| (int64; per-column setup, not per-step)
+        int64_t ddx64 = ax ? (((int64_t)1 << 32) / ax) : (int64_t)DD_CAP;
+        int64_t ddy64 = ay ? (((int64_t)1 << 32) / ay) : (int64_t)DD_CAP;
+        int32_t ddx = ddx64 > DD_CAP ? DD_CAP : (int32_t)ddx64;
+        int32_t ddy = ddy64 > DD_CAP ? DD_CAP : (int32_t)ddy64;
+        int stepx, stepy;
+        int32_t sidex, sidey;
+        // sideDist to the first grid line = (fractional distance) * deltaDist, 16.16 (int64 mul, setup only)
+        if (rdx < 0) {
+            stepx = -1;
+            sidex = (int32_t)(((int64_t)fracx * ddx) >> 16);
+        } else {
+            stepx = 1;
+            sidex = (int32_t)(((int64_t)(65536 - fracx) * ddx) >> 16);
+        }
+        if (rdy < 0) {
+            stepy = -1;
+            sidey = (int32_t)(((int64_t)fracy * ddy) >> 16);
+        } else {
+            stepy = 1;
+            sidey = (int32_t)(((int64_t)(65536 - fracy) * ddy) >> 16);
+        }
+        int side = 0;
+        int cell = 1;
+        for (int i = 0; i < 64; i++) {             // DDA - pure 32-bit
+            if (sidex < sidey) {
+                sidex += ddx;
+                mapx += stepx;
+                side = 0;
+            } else {
+                sidey += ddy;
+                mapy += stepy;
+                side = 1;
+            }
+            cell = (mapx >= 0 && mapx < mw && mapy >= 0 && mapy < mh) ? map[mapy * mw + mapx] : 1;
+            if (cell) {
+                break;
+            }
+        }
+        int32_t perp = (side == 0) ? (sidex - ddx) : (sidey - ddy);   // perpWallDist, 16.16
+        if (perp < 655) {
+            perp = 655;                            // ~0.01 in 16.16
+        }
+        int lh = (int)(((int32_t)sh << 16) / perp);   // sh / perpWallDist (px); 32-bit (sh<<16 <= ~15.7M)
+        int t = half - (lh >> 1);
+        int b = t + lh;
+        if (t < 0) {
+            t = 0;
+        }
+        if (b > sh) {
+            b = sh;
+        }
+        top[c] = (uint16_t)t;
+        bot[c] = (uint16_t)b;
+        int ct = (cell < wc_types) ? cell : 1;     // unknown type -> type 1 (matches Python default)
+        col[c] = wc[ct * 2 + side];
+        dist_out[c] = perp;
+        rdx += srx;                                // accumulate ray direction for the next column (no overflow)
+        rdy += sry;
+    }
+    return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(picogame_raycast_obj, 17, 17, picogame_raycast);
+
 //| def invert(display: busdisplay.BusDisplay, on: bool) -> None:
 //|     """Toggle the panel's hardware colour inversion (INVON/INVOFF). Instant and sends NO
 //|     pixel data, so a brief invert is a FREE full-screen flash (a 1-bit negative 'hit' look)
@@ -1513,6 +1626,7 @@ static const mp_rom_map_elem_t picogame_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR_Framebuffer), MP_ROM_PTR(&picogame_framebuffer_type) },
     #endif
     { MP_ROM_QSTR(MP_QSTR_render), MP_ROM_PTR(&picogame_render_obj) },
+    { MP_ROM_QSTR(MP_QSTR_raycast), MP_ROM_PTR(&picogame_raycast_obj) },
     { MP_ROM_QSTR(MP_QSTR_invert), MP_ROM_PTR(&picogame_invert_obj) },
     { MP_ROM_QSTR(MP_QSTR_collide), MP_ROM_PTR(&picogame_collide_obj) },
     // Canonical noise = the fixed-point implementation (float retired; see `#if 0` above).
