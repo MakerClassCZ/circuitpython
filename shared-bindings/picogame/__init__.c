@@ -1732,8 +1732,227 @@ MP_DEFINE_CONST_OBJ_TYPE(
     );
 #endif // CIRCUITPY_PICOGAME_FRAMEBUFFER
 
+// ===== ROMFS-XIP asset region (Stage 1; review/romfs-xip-implementation-plan.md) =====
+// Assets live in a reserved flash region between NVM and the FAT drive (PICOGAME_ROMFS_BASE_ADDR /
+// PICOGAME_ROMFS_LEN from mpconfigport.h) and are read 0-copy through the XIP window. Compiled
+// only when the board carves a region (CIRCUITPY_PICOGAME_ROMFS_KB > 0); a universal build keeps
+// just ROMFS_SUPPORTED=False. Supersedes the Stage-0 frozen-blob spike (gate results: see the plan).
+#if CIRCUITPY_PICOGAME_ROMFS_KB > 0
+#include "extmod/vfs.h"
+#include "extmod/vfs_rom.h"
+#include "supervisor/filesystem.h"
+#include "py/objarray.h"
+#include "py/stream.h"
+#include "py/mperrno.h"
+#include "supervisor/shared/tick.h"
+
+// Valid ROMFS image at the region base? (header magic per extmod/vfs_rom.c)
+static bool picogame_romfs_present(void) {
+    const uint8_t *base = (const uint8_t *)PICOGAME_ROMFS_BASE_ADDR;
+    return base[0] == (0x80 | 'R') && base[1] == (0x80 | 'M') && base[2] == '1';
+}
+
+//| def romfs_region() -> Optional[Tuple[int, int]]:
+//|     """The reserved asset region as ``(xip_address, length)``, or ``None`` when no valid
+//|     ROMFS image is flashed there (supported-but-empty). The function itself is absent on
+//|     builds without a region - test ``picogame.ROMFS_SUPPORTED`` first."""
+//|     ...
+static mp_obj_t picogame_romfs_region(void) {
+    if (!picogame_romfs_present()) {
+        return mp_const_none;
+    }
+    mp_obj_t items[2] = {
+        mp_obj_new_int_from_uint((uintptr_t)PICOGAME_ROMFS_BASE_ADDR),
+        mp_obj_new_int_from_uint(PICOGAME_ROMFS_LEN),
+    };
+    return mp_obj_new_tuple(2, items);
+}
+static MP_DEFINE_CONST_FUN_OBJ_0(picogame_romfs_region_obj, picogame_romfs_region);
+
+//| def romfs_mount(path: str) -> VfsRom:
+//|     """Mount the asset region's ROMFS at `path` (e.g. ``"/rom"``); files open 0-copy over
+//|     XIP flash. Raises OSError(ENODEV) when no valid image is flashed. Bypasses storage.mount
+//|     (which casts to the FAT-specific fs_user_mount_t) by inserting into the VFS table directly."""
+//|     ...
+static mp_obj_t picogame_romfs_mount(mp_obj_t path_in) {
+    if (!picogame_romfs_present()) {
+        mp_raise_OSError(MP_ENODEV);   // no image flashed - see romfs_region() / (Stage 2) romfs_program()
+    }
+    const char *path = mp_obj_str_get_str(path_in);
+    mp_obj_t buf = mp_obj_new_bytearray_by_ref(PICOGAME_ROMFS_LEN, (void *)PICOGAME_ROMFS_BASE_ADDR);  // 0-copy over flash
+    mp_obj_t vfsrom = mp_call_function_1(MP_OBJ_FROM_PTR(&mp_type_vfs_rom), buf);
+    mp_obj_t dest[4];
+    mp_load_method(vfsrom, MP_QSTR_mount, dest);
+    dest[2] = mp_const_true;   // readonly
+    dest[3] = mp_const_false;  // mkfs
+    mp_call_method_n_kw(2, 0, dest);
+    size_t path_len = strlen(path);
+    char *path_copy = m_new(char, path_len + 1);
+    memcpy(path_copy, path, path_len + 1);
+    mp_vfs_mount_t *vfs = m_new_obj(mp_vfs_mount_t);
+    vfs->str = path_copy;
+    vfs->len = path_len;
+    vfs->obj = vfsrom;
+    vfs->next = MP_STATE_VM(vfs_mount_table);
+    MP_STATE_VM(vfs_mount_table) = vfs;
+    return vfsrom;
+}
+static MP_DEFINE_CONST_FUN_OBJ_1(picogame_romfs_mount_obj, picogame_romfs_mount);
+
+//| def romfs_program(path: str) -> int:
+//|     """Program the asset region from a ROMFS image file (e.g. copied onto CIRCUITPY or the
+//|     SD card) and return the image size written. The file is read through the filesystem, so
+//|     source fragmentation is fine; each sector is erased, written and readback-verified.
+//|     Raises ValueError on a non-ROMFS file (checked before anything is erased),
+//|     OSError(EFBIG) when the image exceeds the region, OSError(EBUSY) while a ROMFS is
+//|     mounted (reboot/unmount first), OSError(EIO) on a verify mismatch or when the source
+//|     file changed size mid-program. The source filesystem is locked against other writers
+//|     where possible (SD, ejected drive); while the host has CIRCUITPY mounted the file is
+//|     read unlocked - don't rewrite it while programming (worst case: an image that fails
+//|     to mount; re-run). The header sector is erased FIRST and programmed LAST, so a
+//|     power loss mid-program leaves no valid image magic: firmware and the CIRCUITPY drive
+//|     are untouched and the next boot sees an absent region (re-run to finish). The only
+//|     unsafe window is the final header-sector program itself; a loss there leaves a
+//|     truncated header that fails to mount - again just re-run."""
+//|     ...
+static mp_obj_t picogame_romfs_program(mp_obj_t path_in) {
+    // Refuse while any VfsRom is mounted: its buffer points into the region being rewritten.
+    for (mp_vfs_mount_t *vfs = MP_STATE_VM(vfs_mount_table); vfs != NULL; vfs = vfs->next) {
+        if (mp_obj_is_type(vfs->obj, &mp_type_vfs_rom)) {
+            mp_raise_OSError(MP_EBUSY);
+        }
+    }
+    mp_obj_t open_args[2] = { path_in, MP_OBJ_NEW_QSTR(MP_QSTR_rb) };
+    mp_obj_t file = mp_vfs_open(2, open_args, (mp_map_t *)&mp_const_empty_map);
+    // Size first (seek end), so an oversized image is rejected BEFORE any erase.
+    mp_obj_t dest[4];
+    mp_load_method(file, MP_QSTR_seek, dest);
+    dest[2] = MP_OBJ_NEW_SMALL_INT(0);
+    dest[3] = MP_OBJ_NEW_SMALL_INT(2);
+    mp_int_t size = mp_obj_get_int(mp_call_method_n_kw(2, 0, dest));
+    mp_load_method(file, MP_QSTR_seek, dest);
+    dest[2] = MP_OBJ_NEW_SMALL_INT(0);
+    dest[3] = MP_OBJ_NEW_SMALL_INT(0);
+    mp_call_method_n_kw(2, 0, dest);
+    if (size > (mp_int_t)PICOGAME_ROMFS_LEN) {
+        mp_stream_close(file);
+        mp_raise_OSError(MP_EFBIG);
+    }
+    if (size < 4) {
+        mp_stream_close(file);
+        mp_raise_ValueError(MP_ERROR_TEXT("Invalid format"));
+    }
+    // TRY to claim the source filesystem (guards SD/BLE/web-workflow writers for free). USB MSC
+    // holds the blockdev lock for its whole session (tud_msc_is_writable_cb), i.e. whenever the
+    // drive is mounted on a host - the NORMAL dev state - so a hard EBUSY here would break the
+    // primary flow (copy the image over USB, run program from the REPL). Unlocked fallback: the
+    // size recheck below + the header re-read + per-sector readback catch a file that changed
+    // mid-program; worst case is an image that fails to mount - re-run.
+    const char *path = mp_obj_str_get_str(path_in);
+    const char *under = NULL;
+    fs_user_mount_t *src_fs = filesystem_for_path(path, &under);
+    bool locked = (src_fs != NULL) && filesystem_lock(src_fs);
+    uint8_t *buf = m_new(uint8_t, PICOGAME_ROMFS_SECTOR);
+    uint32_t off = 0;                                    // sector-aligned region offset
+    uint32_t remaining = (uint32_t)size;
+    int errcode = 0;
+    nlr_buf_t nlr;
+    if (nlr_push(&nlr) == 0) {
+        while (remaining > 0) {
+            // Exactly min(remaining, sector) bytes per sector: short reads are valid stream
+            // semantics, so accumulate; EOF before that (the file shrank) is an EIO, and the
+            // exact accounting is what keeps the sector count inside the region.
+            uint32_t want = remaining < PICOGAME_ROMFS_SECTOR ? remaining : PICOGAME_ROMFS_SECTOR;
+            uint32_t got = 0;
+            while (got < want) {
+                mp_uint_t n = mp_stream_rw(file, buf + got, want - got, &errcode, MP_STREAM_RW_READ);
+                if (errcode != 0 || n == 0) {
+                    mp_raise_OSError(errcode != 0 ? errcode : MP_EIO);
+                }
+                got += (uint32_t)n;
+            }
+            if (want < PICOGAME_ROMFS_SECTOR) {
+                memset(buf + want, 0xff, PICOGAME_ROMFS_SECTOR - want);   // erased-state tail
+            }
+            if (off == 0) {
+                if (!(buf[0] == (0x80 | 'R') && buf[1] == (0x80 | 'M') && buf[2] == '1')) {
+                    mp_raise_ValueError(MP_ERROR_TEXT("Invalid format"));  // nothing erased yet
+                }
+                // POWER-LOSS ORDERING: erase the header sector now (the OLD image's magic dies
+                // before any mixed state can exist) but program it LAST (below) - until then a
+                // power loss leaves no valid magic, so the next boot sees an absent region.
+                common_hal_picogame_romfs_erase_sector(PICOGAME_ROMFS_XIP_OFFSET);
+            } else {
+                common_hal_picogame_romfs_write_sector(PICOGAME_ROMFS_XIP_OFFSET + off, buf);
+                // Verify via the XIP window (the flash calls flush the XIP cache themselves).
+                if (memcmp((const void *)(PICOGAME_ROMFS_BASE_ADDR + off), buf, PICOGAME_ROMFS_SECTOR) != 0) {
+                    mp_raise_OSError(MP_EIO);
+                }
+            }
+            off += PICOGAME_ROMFS_SECTOR;
+            remaining -= want;
+            RUN_BACKGROUND_TASKS;                        // keep USB serviced (source stays locked)
+        }
+        // Body complete + verified. Recheck the source size (cheap concurrent-write detector
+        // for the unlocked fallback), then re-read the header sector and program it last.
+        mp_obj_t dest2[4];
+        mp_load_method(file, MP_QSTR_seek, dest2);
+        dest2[2] = MP_OBJ_NEW_SMALL_INT(0);
+        dest2[3] = MP_OBJ_NEW_SMALL_INT(2);
+        if (mp_obj_get_int(mp_call_method_n_kw(2, 0, dest2)) != size) {
+            mp_raise_OSError(MP_EIO);                    // the file changed while programming
+        }
+        mp_load_method(file, MP_QSTR_seek, dest2);
+        dest2[2] = MP_OBJ_NEW_SMALL_INT(0);
+        dest2[3] = MP_OBJ_NEW_SMALL_INT(0);
+        mp_call_method_n_kw(2, 0, dest2);
+        uint32_t want0 = (uint32_t)size < PICOGAME_ROMFS_SECTOR ? (uint32_t)size : PICOGAME_ROMFS_SECTOR;
+        uint32_t got0 = 0;
+        while (got0 < want0) {
+            mp_uint_t n = mp_stream_rw(file, buf + got0, want0 - got0, &errcode, MP_STREAM_RW_READ);
+            if (errcode != 0 || n == 0) {
+                mp_raise_OSError(errcode != 0 ? errcode : MP_EIO);
+            }
+            got0 += (uint32_t)n;
+        }
+        if (want0 < PICOGAME_ROMFS_SECTOR) {
+            memset(buf + want0, 0xff, PICOGAME_ROMFS_SECTOR - want0);
+        }
+        common_hal_picogame_romfs_write_sector(PICOGAME_ROMFS_XIP_OFFSET, buf);
+        if (memcmp((const void *)PICOGAME_ROMFS_BASE_ADDR, buf, PICOGAME_ROMFS_SECTOR) != 0) {
+            mp_raise_OSError(MP_EIO);
+        }
+        nlr_pop();
+        mp_stream_close(file);
+        if (locked) {
+            filesystem_unlock(src_fs);
+        }
+    } else {
+        // common cleanup for every error path above, then re-raise
+        mp_stream_close(file);
+        if (locked) {
+            filesystem_unlock(src_fs);
+        }
+        nlr_raise(MP_OBJ_FROM_PTR(nlr.ret_val));
+    }
+    m_del(uint8_t, buf, PICOGAME_ROMFS_SECTOR);
+    return mp_obj_new_int_from_uint((uint32_t)size);
+}
+static MP_DEFINE_CONST_FUN_OBJ_1(picogame_romfs_program_obj, picogame_romfs_program);
+#endif // CIRCUITPY_PICOGAME_ROMFS_KB > 0
+// ===== end ROMFS-XIP =====
+
 static const mp_rom_map_elem_t picogame_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR___name__), MP_ROM_QSTR(MP_QSTR_picogame) },
+    #if CIRCUITPY_PICOGAME_ROMFS_KB > 0
+    { MP_ROM_QSTR(MP_QSTR_ROMFS_SUPPORTED), MP_ROM_TRUE },
+    { MP_ROM_QSTR(MP_QSTR_romfs_region), MP_ROM_PTR(&picogame_romfs_region_obj) },
+    { MP_ROM_QSTR(MP_QSTR_romfs_mount), MP_ROM_PTR(&picogame_romfs_mount_obj) },
+    { MP_ROM_QSTR(MP_QSTR_romfs_program), MP_ROM_PTR(&picogame_romfs_program_obj) },
+    { MP_ROM_QSTR(MP_QSTR_VfsRom), MP_ROM_PTR(&mp_type_vfs_rom) },                 // also collects the qstr
+    #else
+    { MP_ROM_QSTR(MP_QSTR_ROMFS_SUPPORTED), MP_ROM_FALSE },
+    #endif
     { MP_ROM_QSTR(MP_QSTR_Bitmap), MP_ROM_PTR(&picogame_bitmap_type) },
     { MP_ROM_QSTR(MP_QSTR_Sprite), MP_ROM_PTR(&picogame_sprite_type) },
     #if CIRCUITPY_PICOGAME_FAST_DISPLAY

@@ -28,8 +28,38 @@
 // This is the XIP address
 #define CIRCUITPY_INTERNAL_NVM_START_ADDR   (0x10000000 + CIRCUITPY_FIRMWARE_SIZE)
 
+// picogame ROMFS-XIP asset region (review/romfs-xip-implementation-plan.md): carved BETWEEN the
+// NVM sector and the FAT drive, so NVM (game saves) keeps its address across flavors and the
+// firmware region is untouched (no linker change). Layout: firmware | NVM 4K | ROMFS | FAT.
+// CIRCUITPY_PICOGAME_ROMFS_KB comes from the build (0 = no region, layout identical to before).
+#ifndef CIRCUITPY_PICOGAME_ROMFS_KB
+#define CIRCUITPY_PICOGAME_ROMFS_KB (0)
+#endif
+#if CIRCUITPY_PICOGAME_ROMFS_KB > 0
+// flash linear offset / XIP bus address / length of the region (4 KB aligned: firmware+NVM are)
+#define PICOGAME_ROMFS_XIP_OFFSET (CIRCUITPY_FIRMWARE_SIZE + CIRCUITPY_INTERNAL_NVM_SIZE)
+#define PICOGAME_ROMFS_BASE_ADDR  (0x10000000 + PICOGAME_ROMFS_XIP_OFFSET)
+#define PICOGAME_ROMFS_LEN        (CIRCUITPY_PICOGAME_ROMFS_KB * 1024)
+// The region-safety invariants romfs_program() relies on (exact sector accounting keeps every
+// write inside [OFFSET, OFFSET+LEN) ONLY if both ends are 4K-aligned) - enforced at build time:
+#if (CIRCUITPY_PICOGAME_ROMFS_KB % 4) != 0
+#error "CIRCUITPY_PICOGAME_ROMFS_KB must be a multiple of 4 (4 KB flash sectors)"
+#endif
+#if (PICOGAME_ROMFS_XIP_OFFSET % 4096) != 0
+#error "PICOGAME_ROMFS_XIP_OFFSET must be 4 KB aligned (check CIRCUITPY_FIRMWARE_SIZE / NVM size)"
+#endif
+// the region implies ROMFS filesystem support (the vfs_rom extmod is self-gated on this);
+// IOCTL stays 0: CP lacks MicroPython's rom_ioctl port glue - deploy is pg.romfs_program instead
+#ifndef MICROPY_VFS_ROM
+#define MICROPY_VFS_ROM (1)
+#endif
+#ifndef MICROPY_VFS_ROM_IOCTL
+#define MICROPY_VFS_ROM_IOCTL (0)
+#endif
+#endif
+
 // This is the flash linear address
-#define CIRCUITPY_CIRCUITPY_DRIVE_START_ADDR (CIRCUITPY_FIRMWARE_SIZE + CIRCUITPY_INTERNAL_NVM_SIZE)
+#define CIRCUITPY_CIRCUITPY_DRIVE_START_ADDR (CIRCUITPY_FIRMWARE_SIZE + CIRCUITPY_INTERNAL_NVM_SIZE + CIRCUITPY_PICOGAME_ROMFS_KB * 1024)
 #define CIRCUITPY_DEFAULT_STACK_SIZE        (24 * 1024)
 
 #define MICROPY_USE_INTERNAL_PRINTF         (1)

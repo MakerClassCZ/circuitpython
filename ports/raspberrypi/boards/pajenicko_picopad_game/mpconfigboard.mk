@@ -84,3 +84,10 @@ CFLAGS += \
 
 # Must be accompanied by a linker script change
 CFLAGS += -DCIRCUITPY_FIRMWARE_SIZE='(1536 * 1024)'
+
+# ROMFS-XIP asset region: 0 = universal DEFAULT (layout identical to the pre-ROMFS firmware, no
+# reformat on flash). The experimental "-romfs" download set overrides this on the make command
+# line (tools/build_fw_all.sh romfs: CIRCUITPY_PICOGAME_ROMFS_KB=64) -> 64 KB carved between NVM
+# and the FAT drive, implies MICROPY_VFS_ROM=1 via mpconfigport.h.
+# NOTE: flashing across flavors moves the FAT start -> CIRCUITPY reformats on first boot.
+CIRCUITPY_PICOGAME_ROMFS_KB = 0

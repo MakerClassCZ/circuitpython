@@ -604,6 +604,14 @@ CFLAGS += -DCIRCUITPY_PICOGAME_RGB444=$(CIRCUITPY_PICOGAME_RGB444)
 # for the other). Python reads `picogame.FPU` to pack camera/point buffers in the matching format.
 CIRCUITPY_PICOGAME_FPU ?= 0
 CFLAGS += -DCIRCUITPY_PICOGAME_FPU=$(CIRCUITPY_PICOGAME_FPU)
+
+# ROMFS-XIP asset region size (KB), carved between the NVM sector and the FAT drive: game assets
+# stay FILES yet blit straight from XIP flash at 0 heap (review/romfs-xip-implementation-plan.md).
+# 0 (default) = the whole feature is compiled out (universal build keeps only
+# picogame.ROMFS_SUPPORTED=False, ~30 B). A game-flavor board sets e.g. 64. NOTE: changing the
+# value moves the FAT drive start -> CIRCUITPY reformats on first boot (document per board).
+CIRCUITPY_PICOGAME_ROMFS_KB ?= 0
+CFLAGS += -DCIRCUITPY_PICOGAME_ROMFS_KB=$(CIRCUITPY_PICOGAME_ROMFS_KB)
 # Full-frame RAM-framebuffer render backend (picogame_render_framebuffer): for scanout-buffer
 # platforms that composite into a RAM framebuffer instead of an SPI strip bus (RP2350 DVI/HSTX
 # like the Adafruit Fruit Jam, the desktop sim, the WASM playground). Off by default so
