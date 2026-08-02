@@ -1123,6 +1123,108 @@ static mp_obj_t picogame_raycast(size_t n_args, const mp_obj_t *args) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(picogame_raycast_obj, 17, 17, picogame_raycast);
 
+// road_edges(rl, rr, hw, n, cx0, dist, cfg) - one racing-road frame's curve accumulator + integer
+// edges in one call (the OutRun-genre compute_road loop; core + cfg layout documented in
+// shared-module). rl/rr = int16 out, hw = int32 Q16 half-widths, cx0 = Q16 screen centre
+// (incl. lateral), dist = integer world distance, cfg = int32[7].
+static mp_obj_t picogame_road_edges_fn(size_t n_args, const mp_obj_t *args) {
+    mp_buffer_info_t rli, rri, hwi, cfgi;
+    mp_get_buffer_raise(args[0], &rli, MP_BUFFER_WRITE);
+    mp_get_buffer_raise(args[1], &rri, MP_BUFFER_WRITE);
+    mp_get_buffer_raise(args[2], &hwi, MP_BUFFER_READ);
+    mp_get_buffer_raise(args[6], &cfgi, MP_BUFFER_READ);
+    int n = mp_obj_get_int(args[3]);
+    int cap = (int)(rli.len < rri.len ? rli.len : rri.len) / 2;
+    if (n > cap) {
+        n = cap;
+    }
+    if (n > (int)(hwi.len / 4)) {
+        n = (int)(hwi.len / 4);
+    }
+    if (n <= 0 || cfgi.len < 7 * 4) {
+        return mp_const_none;
+    }
+    picogame_road_edges((int16_t *)rli.buf, (int16_t *)rri.buf, (const int32_t *)hwi.buf, n,
+        mp_obj_get_int(args[4]), mp_obj_get_int(args[5]), (const int32_t *)cfgi.buf);
+    return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(picogame_road_edges_obj, 7, 7, picogame_road_edges_fn);
+
+// project(cam, pts, n, out_sx, out_sy) - batch perspective projection of `n` 3D points to screen.
+//   cam  = 15 camera params: ex,ey,ez, rx,rz, ux,uy,uz, fx,fy,fz, focal, cx0, cy0, near
+//   pts  = n*3 world coords (x,y,z per point)
+//   out_sx/out_sy = int16 screen coords; a point behind the near plane gets sentinel -32768
+// On an FPU board (CIRCUITPY_PICOGAME_FPU) cam/pts are float32; else they are 16.16 fixed int32.
+// This is the shared hot path for blocky pseudo-3D (project the 8 corners of each box, then fill).
+static mp_obj_t picogame_project(size_t n_args, const mp_obj_t *args) {
+    mp_buffer_info_t ci, pi, xi, yi;
+    mp_get_buffer_raise(args[0], &ci, MP_BUFFER_READ);
+    mp_get_buffer_raise(args[1], &pi, MP_BUFFER_READ);
+    int n = mp_obj_get_int(args[2]);
+    mp_get_buffer_raise(args[3], &xi, MP_BUFFER_WRITE);
+    mp_get_buffer_raise(args[4], &yi, MP_BUFFER_WRITE);
+    int16_t *osx = xi.buf;
+    int16_t *osy = yi.buf;
+    if (n > (int)(xi.len >> 1)) {
+        n = (int)(xi.len >> 1);
+    }
+    #if CIRCUITPY_PICOGAME_FPU
+    const float *cam = ci.buf;
+    const float *pts = pi.buf;
+    float ex = cam[0], ey = cam[1], ez = cam[2];
+    float rx = cam[3], rz = cam[4];
+    float ux = cam[5], uy = cam[6], uz = cam[7];
+    float fx = cam[8], fy = cam[9], fz = cam[10];
+    float focal = cam[11], cx0 = cam[12], cy0 = cam[13], near = cam[14];
+    for (int i = 0; i < n; i++) {
+        float X = pts[i * 3] - ex, Y = pts[i * 3 + 1] - ey, Z = pts[i * 3 + 2] - ez;
+        float cz = X * fx + Y * fy + Z * fz;
+        if (cz < near) {
+            osx[i] = -32768;
+            osy[i] = -32768;
+            continue;
+        }
+        float k = focal / cz;                       // hardware divide on an FPU part
+        osx[i] = (int16_t)(cx0 + (X * rx + Z * rz) * k);
+        osy[i] = (int16_t)(cy0 - (X * ux + Y * uy + Z * uz) * k);
+    }
+    #else
+    const int32_t *cam = ci.buf;                    // all values 16.16
+    const int32_t *pts = pi.buf;
+    int32_t ex = cam[0], ey = cam[1], ez = cam[2];
+    int32_t rx = cam[3], rz = cam[4];
+    int32_t ux = cam[5], uy = cam[6], uz = cam[7];
+    int32_t fx = cam[8], fy = cam[9], fz = cam[10];
+    int32_t focal = cam[11], cx0 = cam[12], cy0 = cam[13], near = cam[14];
+    // Full-precision Q16 dot products (int64 mul per term). A Q8-prescaled-basis/MULS variant was
+    // ~30% faster, but its error grows with |coord| (~0.2%/axis) and k = focal/cz AMPLIFIES it near
+    // the near plane - host-measured 23-34 px warps on close fly-bys at a file-browser world scale
+    // (walls visibly broke). Correctness first: Q16 keeps the worst error a few px at any cz >= near,
+    // for coords up to +-32k units; still ~4-5x faster than the same math in Python on the M0+.
+    #define FMUL(a, b) ((int32_t)(((int64_t)(a) * (b)) >> 16))
+    for (int i = 0; i < n; i++) {
+        int32_t X = pts[i * 3] - ex, Y = pts[i * 3 + 1] - ey, Z = pts[i * 3 + 2] - ez;
+        int32_t cz = FMUL(X, fx) + FMUL(Y, fy) + FMUL(Z, fz);
+        if (cz < near) {
+            osx[i] = -32768;
+            osy[i] = -32768;
+            continue;
+        }
+        // focal/cz in 16.16. A 32-bit divide (focal<<8 = Q24, cz>>8 = Q8 -> Q16) is ~4x cheaper than
+        // an int64 divide on the M0+ (no HW divide) and the lost cz precision costs <0.02 px (host-
+        // measured). Needs FOCAL < ~250 (focal<<8 in uint32) and near >= 1/256 (cz>>8 nonzero).
+        int32_t k = (int32_t)(((uint32_t)focal << 8) / (uint32_t)(cz >> 8));
+        int32_t rr = FMUL(X, rx) + FMUL(Z, rz);
+        int32_t uu = FMUL(X, ux) + FMUL(Y, uy) + FMUL(Z, uz);
+        osx[i] = (int16_t)((cx0 + FMUL(rr, k)) >> 16);
+        osy[i] = (int16_t)((cy0 - FMUL(uu, k)) >> 16);
+    }
+#undef FMUL
+    #endif
+    return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(picogame_project_obj, 5, 5, picogame_project);
+
 //| def invert(display: busdisplay.BusDisplay, on: bool) -> None:
 //|     """Toggle the panel's hardware colour inversion (INVON/INVOFF). Instant and sends NO
 //|     pixel data, so a brief invert is a FREE full-screen flash (a 1-bit negative 'hit' look)
@@ -1627,6 +1729,11 @@ static const mp_rom_map_elem_t picogame_module_globals_table[] = {
     #endif
     { MP_ROM_QSTR(MP_QSTR_render), MP_ROM_PTR(&picogame_render_obj) },
     { MP_ROM_QSTR(MP_QSTR_raycast), MP_ROM_PTR(&picogame_raycast_obj) },
+    { MP_ROM_QSTR(MP_QSTR_road_edges), MP_ROM_PTR(&picogame_road_edges_obj) },
+    { MP_ROM_QSTR(MP_QSTR_project), MP_ROM_PTR(&picogame_project_obj) },
+    // True when the pseudo-3D/math primitives use the hardware-float path (FPU board). Python packs
+    // camera/point buffers as float32 when this is set, else as 16.16 fixed int32.
+    { MP_ROM_QSTR(MP_QSTR_FPU), MP_ROM_INT(CIRCUITPY_PICOGAME_FPU) },
     { MP_ROM_QSTR(MP_QSTR_invert), MP_ROM_PTR(&picogame_invert_obj) },
     { MP_ROM_QSTR(MP_QSTR_collide), MP_ROM_PTR(&picogame_collide_obj) },
     // Canonical noise = the fixed-point implementation (float retired; see `#if 0` above).

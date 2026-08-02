@@ -84,6 +84,9 @@ static void fill565(uint16_t *p, int n, uint16_t color) {
     }
 }
 
+// Defined with the filled shapes below; forward-declared for picogame_canvas_road.
+static void span565(picogame_canvas_obj_t *cv, int y, int xs, int xe, uint16_t color);
+
 void picogame_canvas_clear(picogame_canvas_obj_t *cv, uint16_t color) {
     fill565(cv->data, cv->w * cv->h, color);
     mark(cv, 0, 0, cv->w, cv->h);
@@ -120,6 +123,48 @@ static int log2_pow2(unsigned v) {
         n++;
     }
     return n;
+}
+
+// One racing-road strip, all rows in one call (the OutRun-genre "draw_road" scanline loop - profiled
+// at ~20-25 ms of Python on picobike: ~4 fill_rect boundary crossings + an int(float) phase per row).
+// ri0 = the road-table row of THIS surface's row 0 (vy - horizon_base); negative rows are sky.
+// tab = int16[ntab][5]: {edge_w, dash_hw, wb05_q8, wb07_q8, flags(bit0 = dashes allowed)} - static per
+// game. rl/rr = per-frame integer road edges (road_edges output). d05/d07 = the frame's scrolling
+// stripe/dash phases in Q8; the row's band parity is ((d05+wb05)>>8)&1, matching the Python
+// int(d05f + wb05f) & 1 (both non-negative). colors = uint16[6]: {sky, road_a, road_b, rumble_a,
+// rumble_b, dash}. Grass underneath and the finish-line chequer stay the caller's job (one fill_rect
+// per strip / a few rows near the lap line - no reason to carry them in C).
+void picogame_canvas_road(picogame_canvas_obj_t *cv, int ri0,
+    const int16_t *tab, int ntab, const int16_t *rl, const int16_t *rr,
+    int32_t d05_q8, int32_t d07_q8, const uint16_t *colors) {
+    int w = cv->w;
+    for (int ly = 0; ly < cv->h; ly++) {
+        int ri = ri0 + ly;
+        if (ri < 0) {                                // above the horizon: sky
+            fill565(&cv->data[ly * w], w, colors[0]);
+            continue;
+        }
+        if (ri >= ntab) {
+            ri = ntab - 1;
+        }
+        const int16_t *t = tab + ri * 5;
+        int band = (int)(((d05_q8 + t[2]) >> 8) & 1);
+        uint16_t road = band ? colors[1] : colors[2];
+        uint16_t rumble = band ? colors[3] : colors[4];
+        int l = rl[ri], r = rr[ri];
+        if (r <= l) {
+            continue;
+        }
+        span565(cv, ly, l, r - 1, road);             // fill_rect(l, w=r-l) covers l..r-1
+        int ew = t[0];
+        span565(cv, ly, l, l + ew - 1, rumble);
+        span565(cv, ly, r - ew, r - 1, rumble);
+        if ((t[4] & 1) && (((d07_q8 + t[3]) >> 8) & 1)) {
+            int mid = (l + r) >> 1, dw = t[1];
+            span565(cv, ly, mid - dw, mid + dw - 1, colors[5]);
+        }
+    }
+    mark(cv, 0, 0, w, cv->h);
 }
 
 void picogame_canvas_mode7(picogame_canvas_obj_t *cv, picogame_bitmap_obj_t *tex,
@@ -214,23 +259,36 @@ void picogame_canvas_line(picogame_canvas_obj_t *cv, int x0, int y0, int x1, int
     mark(cv, lx1, ly1, lx2, ly2);
 }
 
+// Clamp a row span to the surface and word-fill it (the span-pass idiom shared by the filled
+// shapes; the per-pixel put() loops it replaced clipped and indexed every pixel).
+static void span565(picogame_canvas_obj_t *cv, int y, int xs, int xe, uint16_t color) {
+    if (y < 0 || y >= cv->h) {
+        return;
+    }
+    if (xs < 0) {
+        xs = 0;
+    }
+    if (xe >= cv->w) {
+        xe = cv->w - 1;
+    }
+    if (xs <= xe) {
+        fill565(&cv->data[y * cv->w + xs], xe - xs + 1, color);
+    }
+}
+
 void picogame_canvas_fill_circle(picogame_canvas_obj_t *cv, int cx, int cy, int r, uint16_t color) {
+    // A filled circle IS fill_ellipse(r, r) - the ellipse row condition s^2*ry2 <= rr - dy^2*rx2
+    // collapses to s^2 <= r^2 - dy^2 (host-proven byte-exact over 36k cases). Same delegation the
+    // OUTLINE circle already does; only r == 0 needs care (the ellipse rejects rx <= 0, a zero-radius
+    // circle is one pixel). Flash: this replaced a ~320 B twin of the ellipse body.
     if (r < 0) {
         return;
     }
-    for (int dy = -r; dy <= r; dy++) {
-        // half-width of the circle at this row
-        int span = 0;
-        long rr = (long)r * r - (long)dy * dy;     // long (like ellipse): int r*r overflows at big radii
-        while ((long)(span + 1) * (span + 1) <= rr) {
-            span++;
-        }
-        int y = cy + dy;
-        for (int x = cx - span; x <= cx + span; x++) {
-            put(cv, x, y, color);
-        }
+    if (r == 0) {
+        picogame_canvas_pixel(cv, cx, cy, color);
+        return;
     }
-    mark(cv, cx - r, cy - r, cx + r + 1, cy + r + 1);
+    picogame_canvas_fill_ellipse(cv, cx, cy, r, r, color);
 }
 
 void picogame_canvas_circle(picogame_canvas_obj_t *cv, int cx, int cy, int r, uint16_t color) {
@@ -245,27 +303,27 @@ void picogame_canvas_ring(picogame_canvas_obj_t *cv, int cx, int cy, int r, int 
     if (inner < 0) {
         inner = 0;
     }
-    for (int dy = -r; dy <= r; dy++) {
-        int out = 0;
+    // Mirrored rows + decremental outer/inner widths, two word-filled spans per row - see fill_circle.
+    int out = r, ins = inner;
+    for (int dy = 0; dy <= r; dy++) {
         long rr = (long)r * r - (long)dy * dy;     // long (like ellipse): int r*r overflows at big radii
-        while ((long)(out + 1) * (out + 1) <= rr) {
-            out++;
+        while ((long)out * out > rr) {
+            out--;
         }
-        int y = cy + dy;
-        if (dy >= -inner && dy <= inner) {
-            int ins = 0, ri = inner * inner - dy * dy;
-            while ((ins + 1) * (ins + 1) <= ri) {
-                ins++;
+        int two_seg = dy <= inner;
+        if (two_seg) {
+            int ri = inner * inner - dy * dy;
+            while (ins * ins > ri) {
+                ins--;
             }
-            for (int x = cx - out; x < cx - ins; x++) {
-                put(cv, x, y, color);
-            }
-            for (int x = cx + ins + 1; x <= cx + out; x++) {
-                put(cv, x, y, color);
-            }
-        } else {
-            for (int x = cx - out; x <= cx + out; x++) {
-                put(cv, x, y, color);
+        }
+        for (int half = 0; half < (dy ? 2 : 1); half++) {
+            int y = half ? cy - dy : cy + dy;
+            if (two_seg) {
+                span565(cv, y, cx - out, cx - ins - 1, color);
+                span565(cv, y, cx + ins + 1, cx + out, color);
+            } else {
+                span565(cv, y, cx - out, cx + out, color);
             }
         }
     }
@@ -294,17 +352,60 @@ void picogame_canvas_fill_triangle(picogame_canvas_obj_t *cv,
             }
         }
     }
-    for (int y = Y[0]; y <= Y[2]; y++) {
-        int xac = (Y[2] == Y[0]) ? X[0] : X[0] + (X[2] - X[0]) * (y - Y[0]) / (Y[2] - Y[0]);
-        int xsh;
-        if (y < Y[1]) {
-            xsh = (Y[1] == Y[0]) ? X[0] : X[0] + (X[1] - X[0]) * (y - Y[0]) / (Y[1] - Y[0]);
-        } else {
-            xsh = (Y[2] == Y[1]) ? X[1] : X[1] + (X[2] - X[1]) * (y - Y[1]) / (Y[2] - Y[1]);
+    // Scanline fill via 16.16 edge DDA + word-filled spans. One 64-bit divide per EDGE replaces two
+    // 32-bit divides per ROW (M0+ has no HW divide, ~75 cyc each; a 20-row wall paid ~40 divides),
+    // and each row goes through fill565 (word stores) instead of a per-pixel clipped put(). Rows and
+    // spans clamp to the canvas up front, so a mostly off-screen triangle costs only its visible rows
+    // (the old loop walked EVERY row of huge triangles and clipped per pixel - quadratic blowup).
+    // Edge x differs from the old divide by at most 1 px (trunc vs floor; host-verified over 100k
+    // triangles), and convex quads - the box faces the 3D demos draw - stay seam-hole-free.
+    int w = cv->w, h = cv->h;
+    if (Y[0] < h && Y[2] >= 0) {
+        int64_t sAC = (Y[2] != Y[0]) ? (((int64_t)(X[2] - X[0]) << 16) / (Y[2] - Y[0])) : 0;
+        int64_t sAB = (Y[1] != Y[0]) ? (((int64_t)(X[1] - X[0]) << 16) / (Y[1] - Y[0])) : 0;
+        int64_t sBC = (Y[2] != Y[1]) ? (((int64_t)(X[2] - X[1]) << 16) / (Y[2] - Y[1])) : 0;
+        uint16_t *data = cv->data;
+        // top half: rows [Y0, Y1) walk edges A->C and A->B
+        int ys = Y[0] < 0 ? 0 : Y[0];
+        int ye = (Y[1] - 1) < (h - 1) ? (Y[1] - 1) : (h - 1);
+        int64_t accAC = ((int64_t)X[0] << 16) + sAC * (ys - Y[0]);
+        int64_t acc2 = ((int64_t)X[0] << 16) + sAB * (ys - Y[0]);
+        for (int y = ys; y <= ye; y++) {
+            int xac = (int)(accAC >> 16);
+            int xsh = (int)(acc2 >> 16);
+            int xs = xac < xsh ? xac : xsh, xe = xac < xsh ? xsh : xac;
+            if (xs < 0) {
+                xs = 0;
+            }
+            if (xe >= w) {
+                xe = w - 1;
+            }
+            if (xs <= xe) {
+                fill565(&data[y * w + xs], xe - xs + 1, color);
+            }
+            accAC += sAC;
+            acc2 += sAB;
         }
-        int xs = xac < xsh ? xac : xsh, xe = xac < xsh ? xsh : xac;
-        for (int x = xs; x <= xe; x++) {
-            put(cv, x, y, color);
+        // bottom half: rows [Y1, Y2] walk edges A->C and B->C (a flat bottom degenerates to sBC=0)
+        ys = Y[1] < 0 ? 0 : Y[1];
+        ye = Y[2] < (h - 1) ? Y[2] : (h - 1);
+        accAC = ((int64_t)X[0] << 16) + sAC * (ys - Y[0]);
+        acc2 = ((int64_t)X[1] << 16) + sBC * (ys - Y[1]);
+        for (int y = ys; y <= ye; y++) {
+            int xac = (int)(accAC >> 16);
+            int xsh = (int)(acc2 >> 16);
+            int xs = xac < xsh ? xac : xsh, xe = xac < xsh ? xsh : xac;
+            if (xs < 0) {
+                xs = 0;
+            }
+            if (xe >= w) {
+                xe = w - 1;
+            }
+            if (xs <= xe) {
+                fill565(&data[y * w + xs], xe - xs + 1, color);
+            }
+            accAC += sAC;
+            acc2 += sBC;
         }
     }
     int mnx = X[0] < X[1] ? X[0] : X[1];
@@ -349,14 +450,16 @@ void picogame_canvas_fill_ellipse(picogame_canvas_obj_t *cv, int cx, int cy, int
     // canvas that fits in RAM on this target. A larger ellipse (only reachable on a big-RAM board with an
     // oversized canvas) renders a wrong shape - never a fault, since put() clips every pixel to the canvas.
     long rx2 = (long)rx * rx, ry2 = (long)ry * ry, rr = rx2 * ry2;
-    for (int dy = -ry; dy <= ry; dy++) {
-        int s = 0;
-        while ((long)(s + 1) * (s + 1) * ry2 + (long)dy * dy * rx2 <= rr) {
-            s++;
+    // Mirrored rows + decremental width, spans word-filled - see fill_circle.
+    int s = rx;
+    for (int dy = 0; dy <= ry; dy++) {
+        long lim = rr - (long)dy * dy * rx2;       // s*s*ry2 <= lim <=> the old (s+1)-increment bound
+        while ((long)s * s * ry2 > lim) {
+            s--;
         }
-        int y = cy + dy;
-        for (int x = cx - s; x <= cx + s; x++) {
-            put(cv, x, y, color);
+        span565(cv, cy + dy, cx - s, cx + s, color);
+        if (dy) {
+            span565(cv, cy - dy, cx - s, cx + s, color);
         }
     }
     mark(cv, cx - rx, cy - ry, cx + rx + 1, cy + ry + 1);

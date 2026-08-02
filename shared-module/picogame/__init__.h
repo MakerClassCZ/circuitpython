@@ -167,6 +167,10 @@ typedef busdisplay_busdisplay_obj_t picogame_output_t;
 // (scene space -> screen space) for camera/centering.
 // Returns a latched BaseException (Ctrl-C / ReloadException) raised by a StripDraw callback, or
 // MP_OBJ_NULL. The caller must re-raise it AFTER closing the display transaction.
+// Racing-road curve pass (see the implementation comment in __init__.c).
+void picogame_road_edges(int16_t *rl, int16_t *rr, const int32_t *hw_q16, int n,
+    int32_t cx_q16, int32_t dist, const int32_t *cfg);
+
 mp_obj_t picogame_blit_strip_layers(
     uint16_t *buf, int region_w, int strip_top, int strip_h, int x0,
     mp_obj_t *items, uint8_t *kinds, size_t n, uint16_t background, int ox, int oy);

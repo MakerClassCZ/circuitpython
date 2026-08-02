@@ -596,6 +596,14 @@ CFLAGS += -DCIRCUITPY_PICOGAME_FAST_DISPLAY=$(CIRCUITPY_PICOGAME_FAST_DISPLAY)
 # game can auto-enable Display(rgb444=...) only where it works. Default 0 (safe RGB565).
 CIRCUITPY_PICOGAME_RGB444 ?= 0
 CFLAGS += -DCIRCUITPY_PICOGAME_RGB444=$(CIRCUITPY_PICOGAME_RGB444)
+
+# Does this MCU have a hardware FPU? On FPU boards (RP2350/M33, ESP32-S3) the pseudo-3D/math
+# primitives (project, and later raycast/mode7) use a plain-float path: higher quality (no 16.16
+# range/precision limits, no grazing glitches) and faster than the soft-float-equivalent fixed path.
+# On RP2040 (M0+, no FPU) it stays integer 16.16. Only ONE path is compiled per board (no flash cost
+# for the other). Python reads `picogame.FPU` to pack camera/point buffers in the matching format.
+CIRCUITPY_PICOGAME_FPU ?= 0
+CFLAGS += -DCIRCUITPY_PICOGAME_FPU=$(CIRCUITPY_PICOGAME_FPU)
 # Full-frame RAM-framebuffer render backend (picogame_render_framebuffer): for scanout-buffer
 # platforms that composite into a RAM framebuffer instead of an SPI strip bus (RP2350 DVI/HSTX
 # like the Adafruit Fruit Jam, the desktop sim, the WASM playground). Off by default so

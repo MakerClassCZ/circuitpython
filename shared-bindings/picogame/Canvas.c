@@ -134,6 +134,65 @@ static mp_obj_t canvas_mode7(size_t n, const mp_obj_t *a) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(canvas_mode7_obj, 11, 11, canvas_mode7);
 
+//|     def fill_triangles(self, verts: ReadableBuffer, colors: ReadableBuffer, n: int) -> None:
+//|         """Fill `n` triangles in ONE call: `verts` = int16 x0,y0,x1,y1,x2,y2 per triangle,
+//|         `colors` = uint16 wire RGB565 per triangle. Same rasteriser as fill_triangle, but the
+//|         whole batch crosses the Python/C boundary once - the win for many small triangles
+//|         (blocky 3D, low-poly meshes) where the ~10 us per-call overhead otherwise dominates."""
+//|         ...
+static mp_obj_t canvas_fill_triangles(size_t na, const mp_obj_t *a) {
+    picogame_canvas_obj_t *cv = cv_self(a[0]);
+    mp_buffer_info_t vi, ci;
+    mp_get_buffer_raise(a[1], &vi, MP_BUFFER_READ);
+    mp_get_buffer_raise(a[2], &ci, MP_BUFFER_READ);
+    int n = mp_obj_get_int(a[3]);
+    const int16_t *v = vi.buf;
+    const uint16_t *col = ci.buf;
+    int cap_v = (int)(vi.len / 12);        // 6 int16 = 12 bytes per triangle
+    int cap_c = (int)(ci.len >> 1);
+    if (n > cap_v) {
+        n = cap_v;
+    }
+    if (n > cap_c) {
+        n = cap_c;
+    }
+    for (int i = 0; i < n; i++) {
+        const int16_t *p = v + i * 6;
+        picogame_canvas_fill_triangle(cv, p[0], p[1], p[2], p[3], p[4], p[5], col[i]);
+    }
+    return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(canvas_fill_triangles_obj, 4, 4, canvas_fill_triangles);
+
+//|     def road(self, ri0: int, tab: ReadableBuffer, rl: ReadableBuffer, rr: ReadableBuffer,
+//|              d05_q8: int, d07_q8: int, colors: ReadableBuffer) -> None:
+//|         """Draw one racing-road strip (OutRun-style) from precomputed tables - the whole
+//|         per-scanline loop in one call. ri0 = road-table row of this surface's row 0 (may be
+//|         negative = sky rows). tab = int16 rows of {edge_w, dash_hw, wb05_q8, wb07_q8, flags};
+//|         rl/rr = int16 per-row edges (see picogame.road_edges); d05/d07 = Q8 scroll phases;
+//|         colors = 6x uint16 {sky, road_a, road_b, rumble_a, rumble_b, dash}."""
+//|         ...
+static mp_obj_t canvas_road(size_t n, const mp_obj_t *a) {
+    mp_buffer_info_t tabi, rli, rri, coli;
+    mp_get_buffer_raise(a[2], &tabi, MP_BUFFER_READ);
+    mp_get_buffer_raise(a[3], &rli, MP_BUFFER_READ);
+    mp_get_buffer_raise(a[4], &rri, MP_BUFFER_READ);
+    mp_get_buffer_raise(a[7], &coli, MP_BUFFER_READ);
+    int ntab = (int)(tabi.len / (5 * 2));
+    int nedge = (int)(rli.len < rri.len ? rli.len : rri.len) / 2;
+    if (nedge < ntab) {
+        ntab = nedge;                                // never read past the shorter per-frame arrays
+    }
+    if (ntab <= 0 || coli.len < 6 * 2) {
+        return mp_const_none;
+    }
+    picogame_canvas_road(cv_self(a[0]), mp_obj_get_int(a[1]),
+        (const int16_t *)tabi.buf, ntab, (const int16_t *)rli.buf, (const int16_t *)rri.buf,
+        mp_obj_get_int(a[5]), mp_obj_get_int(a[6]), (const uint16_t *)coli.buf);
+    return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(canvas_road_obj, 8, 8, canvas_road);
+
 //|     def rect(self, x: int, y: int, w: int, h: int, color: int) -> None: ...
 static mp_obj_t canvas_rect(size_t n, const mp_obj_t *a) {
     picogame_canvas_rect(cv_self(a[0]), mp_obj_get_int(a[1]), mp_obj_get_int(a[2]),
@@ -296,6 +355,8 @@ static const mp_rom_map_elem_t picogame_canvas_locals_dict_table[] = {
     { MP_ROM_QSTR(MP_QSTR_fill_rect), MP_ROM_PTR(&canvas_fill_rect_obj) },
     { MP_ROM_QSTR(MP_QSTR_blit), MP_ROM_PTR(&canvas_blit_obj) },
     { MP_ROM_QSTR(MP_QSTR_mode7), MP_ROM_PTR(&canvas_mode7_obj) },
+    { MP_ROM_QSTR(MP_QSTR_fill_triangles), MP_ROM_PTR(&canvas_fill_triangles_obj) },
+    { MP_ROM_QSTR(MP_QSTR_road), MP_ROM_PTR(&canvas_road_obj) },
     { MP_ROM_QSTR(MP_QSTR_rect), MP_ROM_PTR(&canvas_rect_obj) },
     { MP_ROM_QSTR(MP_QSTR_line), MP_ROM_PTR(&canvas_line_obj) },
     { MP_ROM_QSTR(MP_QSTR_fill_circle), MP_ROM_PTR(&canvas_fill_circle_obj) },

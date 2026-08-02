@@ -10,6 +10,16 @@ static inline int floordiv(int a, int b) {
     return (a >= 0) ? (a / b) : -(((-a) + b - 1) / b);
 }
 
+// log2 of a power-of-2 (small tile dims), without a __ctzsi2 lib call on the M0+ (no CLZ/RBIT).
+static inline int pow2_shift(unsigned v) {
+    int n = 0;
+    while (v > 1u) {
+        v >>= 1;
+        n++;
+    }
+    return n;
+}
+
 // Thin wrappers over the shared int32 accumulator (dx1,dy1,dx2,dy2 are contiguous int32 at the
 // struct tail). See picogame_dirty_* in __init__.c.
 void picogame_tilemap_dirty_reset(picogame_tilemap_obj_t *tm) {
@@ -52,11 +62,16 @@ void picogame_blit_tilemap(
     int rx1 = x0, ry1 = strip_top;
     int rx2 = x0 + region_w, ry2 = strip_top + strip_h;
 
-    // Tile index range overlapping the region.
-    int tx_lo = floordiv(rx1 - tmx, tw);
-    int tx_hi = floordiv(rx2 - 1 - tmx, tw);
-    int ty_lo = floordiv(ry1 - tmy, th);
-    int ty_hi = floordiv(ry2 - 1 - tmy, th);
+    // Tile index range overlapping the region. Tile dims are almost always powers of two (8, 16),
+    // where floor division is an arithmetic shift (signed >> floors toward -inf, exactly what
+    // floordiv does) - which skips 4 idiv per strip on the tilemap background. Non-pow2 tiles fall
+    // back to floordiv. (shx>=0 signals the pow2 fast path; the ctz runs twice per call, not per tile.)
+    int shx = (tw & (tw - 1)) ? -1 : pow2_shift((unsigned)tw);
+    int shy = (th & (th - 1)) ? -1 : pow2_shift((unsigned)th);
+    int tx_lo = (shx >= 0) ? ((rx1 - tmx) >> shx) : floordiv(rx1 - tmx, tw);
+    int tx_hi = (shx >= 0) ? ((rx2 - 1 - tmx) >> shx) : floordiv(rx2 - 1 - tmx, tw);
+    int ty_lo = (shy >= 0) ? ((ry1 - tmy) >> shy) : floordiv(ry1 - tmy, th);
+    int ty_hi = (shy >= 0) ? ((ry2 - 1 - tmy) >> shy) : floordiv(ry2 - 1 - tmy, th);
     tx_lo = picogame_imax(tx_lo, 0);
     ty_lo = picogame_imax(ty_lo, 0);
     tx_hi = picogame_imin(tx_hi, (int)tm->map_w - 1);
