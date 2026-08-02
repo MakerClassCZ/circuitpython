@@ -18,10 +18,10 @@
 //    stale core1 running user-era code.
 
 #include "py/mpconfig.h"
+#include "shared-module/picogame/__init__.h"   // prototypes + picogame_job_t for BOTH branches
 
 #if CIRCUITPY_PICOGAME_FAST_DISPLAY
 
-#include "shared-module/picogame/__init__.h"
 #include "pico/multicore.h"
 
 static picogame_job_t volatile s_fn;

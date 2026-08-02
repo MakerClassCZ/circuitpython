@@ -1131,7 +1131,9 @@ static mp_obj_t picogame_core1_fn(mp_obj_t on) {
     return mp_const_none;
 }
 static MP_DEFINE_CONST_FUN_OBJ_1(picogame_core1_obj, picogame_core1_fn);
+#endif
 
+#if defined(PICOGAME_CORE1_PROBE) && CIRCUITPY_PICOGAME_FAST_DISPLAY
 // refresh_async(on) - PROBE: scene.refresh() submits the whole compose+send to core1 and returns
 // immediately (frame = max(Python, refresh) instead of the sum). Sprite/Tilemap/Canvas scenes only
 // (StripDraw falls back to today's synchronous path). Temporary API for the Stage-3 estimate.
@@ -1971,7 +1973,9 @@ static const mp_rom_map_elem_t picogame_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR_road_edges), MP_ROM_PTR(&picogame_road_edges_obj) },
     #if defined(PICOGAME_CORE1_PROBE)
     { MP_ROM_QSTR(MP_QSTR_core1), MP_ROM_PTR(&picogame_core1_obj) },
+    #if CIRCUITPY_PICOGAME_FAST_DISPLAY
     { MP_ROM_QSTR(MP_QSTR_refresh_async), MP_ROM_PTR(&picogame_refresh_async_obj) },
+    #endif
     #endif
     { MP_ROM_QSTR(MP_QSTR_project), MP_ROM_PTR(&picogame_project_obj) },
     // True when the pseudo-3D/math primitives use the hardware-float path (FPU board). Python packs

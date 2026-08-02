@@ -449,7 +449,7 @@ static mp_obj_t scene_refresh_fb(picogame_scene_obj_t *self) {
 //|         Returns the bounding dirty rect as a REUSED list [x1, y1, x2, y2] (read it
 //|         immediately; it's overwritten next call), or None if nothing changed."""
 //|         ...
-#if defined(PICOGAME_CORE1_PROBE)
+#if defined(PICOGAME_CORE1_PROBE) && CIRCUITPY_PICOGAME_FAST_DISPLAY
 // Async-refresh PROBE state: one in-flight frame's arguments, copied out of refresh() so the core1
 // job needs nothing from the caller's stack. Buffers/items stay alive because the SCENE object owns
 // them (the bench contract; the production version pins per frame). StripDraw scenes never take this
