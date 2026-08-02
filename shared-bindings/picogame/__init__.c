@@ -1123,6 +1123,26 @@ static mp_obj_t picogame_raycast(size_t n_args, const mp_obj_t *args) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(picogame_raycast_obj, 17, 17, picogame_raycast);
 
+#if defined(PICOGAME_CORE1_PROBE)
+// core1(on) - PROBE toggle: route splittable kernels (mode7 rows for now) through the second-core
+// fork-join helper. Temporary API for A/B measurement; the final shape lands after the probe verdict.
+static mp_obj_t picogame_core1_fn(mp_obj_t on) {
+    picogame_core1_set_enabled(mp_obj_is_true(on));
+    return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_1(picogame_core1_obj, picogame_core1_fn);
+
+// refresh_async(on) - PROBE: scene.refresh() submits the whole compose+send to core1 and returns
+// immediately (frame = max(Python, refresh) instead of the sum). Sprite/Tilemap/Canvas scenes only
+// (StripDraw falls back to today's synchronous path). Temporary API for the Stage-3 estimate.
+extern bool picogame_scene_refresh_async_enabled;
+static mp_obj_t picogame_refresh_async_fn(mp_obj_t on) {
+    picogame_scene_refresh_async_enabled = mp_obj_is_true(on);
+    return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_1(picogame_refresh_async_obj, picogame_refresh_async_fn);
+#endif
+
 // road_edges(rl, rr, hw, n, cx0, dist, cfg) - one racing-road frame's curve accumulator + integer
 // edges in one call (the OutRun-genre compute_road loop; core + cfg layout documented in
 // shared-module). rl/rr = int16 out, hw = int32 Q16 half-widths, cx0 = Q16 screen centre
@@ -1730,6 +1750,10 @@ static const mp_rom_map_elem_t picogame_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR_render), MP_ROM_PTR(&picogame_render_obj) },
     { MP_ROM_QSTR(MP_QSTR_raycast), MP_ROM_PTR(&picogame_raycast_obj) },
     { MP_ROM_QSTR(MP_QSTR_road_edges), MP_ROM_PTR(&picogame_road_edges_obj) },
+    #if defined(PICOGAME_CORE1_PROBE)
+    { MP_ROM_QSTR(MP_QSTR_core1), MP_ROM_PTR(&picogame_core1_obj) },
+    { MP_ROM_QSTR(MP_QSTR_refresh_async), MP_ROM_PTR(&picogame_refresh_async_obj) },
+    #endif
     { MP_ROM_QSTR(MP_QSTR_project), MP_ROM_PTR(&picogame_project_obj) },
     // True when the pseudo-3D/math primitives use the hardware-float path (FPU board). Python packs
     // camera/point buffers as float32 when this is set, else as 16.16 fixed int32.

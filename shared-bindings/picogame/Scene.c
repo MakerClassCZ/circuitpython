@@ -449,8 +449,47 @@ static mp_obj_t scene_refresh_fb(picogame_scene_obj_t *self) {
 //|         Returns the bounding dirty rect as a REUSED list [x1, y1, x2, y2] (read it
 //|         immediately; it's overwritten next call), or None if nothing changed."""
 //|         ...
+#if defined(PICOGAME_CORE1_PROBE)
+// Async-refresh PROBE state: one in-flight frame's arguments, copied out of refresh() so the core1
+// job needs nothing from the caller's stack. Buffers/items stay alive because the SCENE object owns
+// them (the bench contract; the production version pins per frame). StripDraw scenes never take this
+// path (their per-strip Python callbacks cannot run on core1).
+typedef struct {
+    picogame_display_obj_t *disp;
+    mp_obj_t *items;
+    uint8_t *kinds;
+    size_t count;
+    uint16_t *buf_a, *buf_b;
+    size_t buf_pixels;
+    picogame_rect_t rects[PICOGAME_MAX_DIRTY_RECTS];
+    int nr;
+    uint16_t background;
+    int ox, oy;
+} scene_async_frame_t;
+static scene_async_frame_t s_async_frame;
+bool picogame_scene_refresh_async_enabled;      // pg.refresh_async(bool) flips this (probe toggle)
+
+static void scene_async_job(void *arg, int lo, int hi) {
+    (void)lo;
+    (void)hi;
+    scene_async_frame_t *f = arg;
+    for (int i = 0; i < f->nr; i++) {
+        common_hal_picogame_display_render(f->disp, f->items, f->kinds, f->count,
+            f->buf_a, f->buf_b, f->buf_pixels,
+            f->rects[i].x1, f->rects[i].y1, f->rects[i].x2, f->rects[i].y2,
+            f->background, f->ox, f->oy);
+    }
+}
+#endif
+
 static mp_obj_t picogame_scene_refresh(mp_obj_t self_in) {
     picogame_scene_obj_t *self = MP_OBJ_TO_PTR(self_in);
+
+    #if defined(PICOGAME_CORE1_PROBE)
+    // Async-refresh PROBE: a previous frame may still be rendering on core1 - join before touching
+    // scene state (also gives natural backpressure: running ahead of the display blocks here).
+    picogame_core1_join();
+    #endif
 
     #if CIRCUITPY_PICOGAME_FRAMEBUFFER
     if (self->fb_target) {
@@ -492,6 +531,37 @@ static mp_obj_t picogame_scene_refresh(mp_obj_t self_in) {
     // render completes, so a BaseException mid-render (Ctrl-C in a StripDraw) leaves a
     // scene whose NEXT refresh repaints everything instead of keeping a torn frame.
     self->cleared = false;
+    #if defined(PICOGAME_CORE1_PROBE) && CIRCUITPY_PICOGAME_FAST_DISPLAY
+    if (picogame_scene_refresh_async_enabled && self->fast) {
+        bool has_stripdraw = false;
+        for (size_t k = 0; k < self->count; k++) {
+            if ((self->kinds[k] & PICOGAME_KIND_MASK) == PICOGAME_KIND_STRIPDRAW) {
+                has_stripdraw = true;               // Python callback per strip -> core1 can't run it
+                break;
+            }
+        }
+        if (!has_stripdraw) {
+            s_async_frame.disp = MP_OBJ_TO_PTR(self->display);
+            s_async_frame.items = self->items;
+            s_async_frame.kinds = self->kinds;
+            s_async_frame.count = self->count;
+            s_async_frame.buf_a = (uint16_t *)a.buf;
+            s_async_frame.buf_b = (uint16_t *)b.buf;
+            s_async_frame.buf_pixels = buf_pixels;
+            for (int i = 0; i < nr; i++) {
+                s_async_frame.rects[i] = rects[i];
+            }
+            s_async_frame.nr = nr;
+            s_async_frame.background = self->background;
+            s_async_frame.ox = self->ox;
+            s_async_frame.oy = self->oy;
+            if (picogame_core1_submit(scene_async_job, &s_async_frame)) {
+                self->cleared = true;               // frame is in flight; return immediately
+                return scene_store_dirty(self, rects, nr, w, h);
+            }
+        }
+    }
+    #endif
     for (int i = 0; i < nr; i++) {
         #if CIRCUITPY_PICOGAME_FAST_DISPLAY
         if (self->fast) {

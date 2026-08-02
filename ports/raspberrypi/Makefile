@@ -480,6 +480,14 @@ endif
 
 SRC_C += shared/runtime/gchelper_native.c
 
+# picogame core1 fork-join PROBE (rp2-only): the second core runs half of a splittable kernel
+# (first consumer: Canvas.mode7 rows). The define gates the pg.core1() toggle binding so ports
+# without the helper still link.
+ifeq ($(CIRCUITPY_PICOGAME),1)
+SRC_C += common-hal/picogame/core1.c
+CFLAGS += -DPICOGAME_CORE1_PROBE=1
+endif
+
 SRC_SDK := \
 	src/common/hardware_claim/claim.c \
 	src/common/pico_sync/critical_section.c \

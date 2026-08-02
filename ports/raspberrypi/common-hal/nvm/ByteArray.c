@@ -23,9 +23,17 @@ uint32_t common_hal_nvm_bytearray_get_length(const nvm_bytearray_obj_t *self) {
     return self->len;
 }
 
+#if CIRCUITPY_PICOGAME
+void picogame_core1_flash_fence(void);   // park the picogame core1 worker (executes from XIP)
+#define PICOGAME_FLASH_FENCE() picogame_core1_flash_fence()
+#else
+#define PICOGAME_FLASH_FENCE()
+#endif
+
 static void write_page(uint32_t page_addr, uint32_t offset, uint32_t len, uint8_t *bytes) {
     // Write a whole page to flash, buffering it first and then erasing and rewriting it
     // since we can only write a whole page at a time.
+    PICOGAME_FLASH_FENCE();
     if (offset == 0 && len == FLASH_PAGE_SIZE) {
         supervisor_flash_pre_write();
         flash_range_program(RMV_OFFSET(page_addr), bytes, FLASH_PAGE_SIZE);
@@ -42,6 +50,7 @@ static void write_page(uint32_t page_addr, uint32_t offset, uint32_t len, uint8_
 }
 
 static void erase_and_write_sector(uint32_t address, uint32_t len, uint8_t *bytes) {
+    PICOGAME_FLASH_FENCE();
     // Write a whole sector to flash, buffering it first and then erasing and rewriting it
     // since we can only erase a whole sector at a time.
     uint8_t buffer[FLASH_SECTOR_SIZE];

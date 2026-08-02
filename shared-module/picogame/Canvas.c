@@ -167,6 +167,49 @@ void picogame_canvas_road(picogame_canvas_obj_t *cv, int ri0,
     mark(cv, 0, 0, w, cv->h);
 }
 
+// Context + row job for the mode7 loop: rows [lo, hi) are fully independent, which makes this the
+// first consumer of the picogame_par_split fork-join hook (each row derives rowdist/steps from its
+// own sy; the halves write disjoint rows of the same canvas).
+typedef struct {
+    picogame_canvas_obj_t *cv;
+    const uint8_t *data;
+    const uint16_t *pal;
+    int fmt, stride, shx, shy, mx, my, horizon, y_off;
+    int32_t z, rx0, ry0, rsx, rsy, cam_x, cam_y;
+    bool transp;
+    uint16_t key;
+} mode7_ctx_t;
+
+static void mode7_rows(void *arg, int lo, int hi) {
+    mode7_ctx_t *c = arg;
+    picogame_canvas_obj_t *cv = c->cv;
+    int w = cv->w;
+    for (int sy = lo; sy < hi; sy++) {
+        int denom = (sy + c->y_off) - c->horizon;
+        if (denom <= 0) {
+            continue;
+        }
+        // 32-bit throughout (no 64-bit mul helper on the M0+): rowdist*coeff stays
+        // within int32 for sane camera params - the Python helper keeps z and the
+        // ray deltas small; extreme values degrade to wrong pixels, never a crash.
+        int32_t rowdist = c->z / denom;
+        int32_t stepx = (rowdist * c->rsx) >> 16;
+        int32_t stepy = (rowdist * c->rsy) >> 16;
+        int32_t fx = c->cam_x + ((rowdist * c->rx0) >> 16);
+        int32_t fy = c->cam_y + ((rowdist * c->ry0) >> 16);
+        uint16_t *drow = cv->data + sy * w;
+        for (int sx = 0; sx < w; sx++) {
+            int tx = (fx >> c->shx) & c->mx, ty = (fy >> c->shy) & c->my;
+            uint16_t val;
+            if (src_pixel_s(c->fmt, c->data, c->pal, c->transp, c->key, ty * c->stride + tx, &val)) {
+                drow[sx] = val;
+            }
+            fx += stepx;
+            fy += stepy;
+        }
+    }
+}
+
 void picogame_canvas_mode7(picogame_canvas_obj_t *cv, picogame_bitmap_obj_t *tex,
     int horizon, int y_off, int32_t z, int32_t rx0, int32_t ry0, int32_t rsx, int32_t rsy,
     int32_t cam_x, int32_t cam_y) {
@@ -197,29 +240,15 @@ void picogame_canvas_mode7(picogame_canvas_obj_t *cv, picogame_bitmap_obj_t *tex
     if (y0 < 0) {
         y0 = 0;
     }
-    for (int sy = y0; sy < cv->h; sy++) {
-        int denom = (sy + y_off) - horizon;
-        if (denom <= 0) {
-            continue;
-        }
-        // 32-bit throughout (no 64-bit mul helper on the M0+): rowdist*coeff stays
-        // within int32 for sane camera params - the Python helper keeps z and the
-        // ray deltas small; extreme values degrade to wrong pixels, never a crash.
-        int32_t rowdist = z / denom;
-        int32_t stepx = (rowdist * rsx) >> 16;
-        int32_t stepy = (rowdist * rsy) >> 16;
-        int32_t fx = cam_x + ((rowdist * rx0) >> 16);
-        int32_t fy = cam_y + ((rowdist * ry0) >> 16);
-        uint16_t *drow = cv->data + sy * cv->w;
-        for (int sx = 0; sx < cv->w; sx++) {
-            int tx = (fx >> shx) & mx, ty = (fy >> shy) & my;
-            uint16_t val;
-            if (src_pixel_s(fmt, data, pal, transp, key, ty * stride + tx, &val)) {
-                drow[sx] = val;
-            }
-            fx += stepx;
-            fy += stepy;
-        }
+    // Rows are fully independent (each derives everything from its own sy), so the row loop is
+    // packaged as a job over [lo, hi) and offered to picogame_par_split (the optional second-core
+    // splitter; NULL or refusal = the same code runs serially right here).
+    mode7_ctx_t ctx = {
+        cv, data, pal, fmt, stride, shx, shy, mx, my, horizon, y_off,
+        z, rx0, ry0, rsx, rsy, cam_x, cam_y, transp, key
+    };
+    if (picogame_par_split == NULL || !picogame_par_split(mode7_rows, &ctx, y0, cv->h)) {
+        mode7_rows(&ctx, y0, cv->h);
     }
     mark(cv, 0, y0, cv->w, cv->h);
 }

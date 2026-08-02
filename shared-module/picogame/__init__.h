@@ -167,6 +167,18 @@ typedef busdisplay_busdisplay_obj_t picogame_output_t;
 // (scene space -> screen space) for camera/centering.
 // Returns a latched BaseException (Ctrl-C / ReloadException) raised by a StripDraw callback, or
 // MP_OBJ_NULL. The caller must re-raise it AFTER closing the display transaction.
+// Optional fork-join hook for row/column-splittable kernels (PROBE): a port may install a splitter
+// that runs [mid, hi) on a second core while the caller runs [lo, mid). NULL = always serial.
+// Kernels call it as: if (!picogame_par_split || !picogame_par_split(job, &ctx, lo, hi)) job(&ctx, lo, hi);
+typedef void (*picogame_job_t)(void *arg, int lo, int hi);
+extern bool (*picogame_par_split)(picogame_job_t fn, void *arg, int lo, int hi);
+// Port-side controls (RP2040: common-hal/picogame/core1.c; no-ops elsewhere).
+void picogame_core1_set_enabled(bool on);
+void picogame_core1_reset(void);
+void picogame_core1_flash_fence(void);
+bool picogame_core1_submit(picogame_job_t fn, void *arg);
+void picogame_core1_join(void);
+
 // Racing-road curve pass (see the implementation comment in __init__.c).
 void picogame_road_edges(int16_t *rl, int16_t *rr, const int32_t *hw_q16, int n,
     int32_t cx_q16, int32_t dist, const int32_t *cfg);

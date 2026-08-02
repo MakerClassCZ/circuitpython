@@ -430,6 +430,9 @@ static int32_t pg_sin_q15(int deg) {
     }
     return -pg_sin_q15_quad[360 - deg];
 }
+// Fork-join hook (see __init__.h). NULL until a port installs its splitter.
+bool (*picogame_par_split)(picogame_job_t fn, void *arg, int lo, int hi) = NULL;
+
 static int32_t pg_cos_q15(int deg) {
     return pg_sin_q15(deg + 90);
 }
