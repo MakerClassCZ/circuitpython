@@ -184,6 +184,13 @@ static void mode7_rows(void *arg, int lo, int hi) {
     mode7_ctx_t *c = arg;
     picogame_canvas_obj_t *cv = c->cv;
     int w = cv->w;
+    #if defined(PICOGAME_HAS_INTERP)
+    int ltw = 16 - c->shx;
+    int lth = 16 - c->shy;
+    bool use_interp = (c->fmt == PICOGAME_FMT_PAL8) && !c->transp && c->pal != NULL
+        && c->stride == c->mx + 1
+        && ltw >= 1 && lth >= 1 && ltw + lth <= 16;   // lane1 shift = shy-ltw must be >= 0
+    #endif
     for (int sy = lo; sy < hi; sy++) {
         int denom = (sy + c->y_off) - c->horizon;
         if (denom <= 0) {
@@ -198,6 +205,13 @@ static void mode7_rows(void *arg, int lo, int hi) {
         int32_t fx = c->cam_x + ((rowdist * c->rx0) >> 16);
         int32_t fy = c->cam_y + ((rowdist * c->ry0) >> 16);
         uint16_t *drow = cv->data + sy * w;
+        #if defined(PICOGAME_HAS_INTERP)
+        if (use_interp) {
+            picogame_mode7_row_interp(drow, w, c->data, c->pal,
+                (uint32_t)fx, (uint32_t)fy, stepx, stepy, c->shx, c->shy, ltw, lth);
+            continue;
+        }
+        #endif
         for (int sx = 0; sx < w; sx++) {
             int tx = (fx >> c->shx) & c->mx, ty = (fy >> c->shy) & c->my;
             uint16_t val;

@@ -493,6 +493,10 @@ endif
 # without the helper still link.
 ifeq ($(CIRCUITPY_PICOGAME),1)
 SRC_C += common-hal/picogame/core1.c
+# SIO interpolator fast path for the mode7 inner row (RP2040 + RP2350; per-core HW,
+# so it composes with the core1 row split). Portable C remains the fallback elsewhere.
+SRC_C += common-hal/picogame/interp.c
+CFLAGS += -DPICOGAME_HAS_INTERP=1
 CFLAGS += -DPICOGAME_CORE1_PROBE=1
 endif
 
