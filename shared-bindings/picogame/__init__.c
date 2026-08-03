@@ -1649,6 +1649,11 @@ static MP_DEFINE_CONST_FUN_OBJ_KW(picogame_fbm1d_fx_obj, 1, picogame_fbm1d_fx);
 //|
 //|     def __init__(self, buffer: WriteableBuffer, width: int, height: int, *,
 //|                  native_rgb565: bool = False, rgb332: bool = False) -> None: ...
+// Static SRAM compose strip (see the scratch comment in make_new). 640*16*2 = 20 KB .bss,
+// only on CIRCUITPY_PICOGAME_FRAMEBUFFER builds (fb boards have the SRAM to spare).
+#define PICOGAME_FB_SCRATCH_MAX_W 640
+static uint16_t picogame_fb_scratch_sram[PICOGAME_FB_SCRATCH_MAX_W * PICOGAME_FB_SCRATCH_H];
+
 static mp_obj_t picogame_framebuffer_make_new(const mp_obj_type_t *type, size_t n_args,
     size_t n_kw, const mp_obj_t *all_args) {
     enum { ARG_buffer, ARG_width, ARG_height, ARG_native_rgb565, ARG_rgb332 };
@@ -1689,6 +1694,12 @@ static mp_obj_t picogame_framebuffer_make_new(const mp_obj_type_t *type, size_t 
     // a half-composited region (background filled, sprite not yet drawn) = no sprite/HUD flicker.
     // Always allocated for the FB target; the WASM/sim path (read out after present, not live) just
     // pays a small strip + one memcpy. See PICOGAME_FB_SCRATCH_H.
+    //
+    // The scratch must be FAST memory: on a PSRAM-heap board (Fruit Jam) a heap bytearray
+    // lands in external PSRAM and every compose write pays QSPI latency (measured 8.7 vs
+    // 64+ MB/s SRAM; a full-res StripDraw frame ballooned refresh to ~30-38 ms). One static
+    // SRAM strip serves every Framebuffer (compose is synchronous) up to 640 px wide; wider
+    // targets fall back to the heap.
     self->scratch_buf = mp_const_none;
     self->scratch = NULL;
     self->scratch_rows = 0;
@@ -1697,11 +1708,15 @@ static mp_obj_t picogame_framebuffer_make_new(const mp_obj_type_t *type, size_t 
         if (rows > height) {
             rows = height;
         }
-        mp_obj_t sb = mp_obj_new_bytearray_of_zeros((size_t)width * (size_t)rows * 2u);
-        mp_buffer_info_t sbi;
-        mp_get_buffer_raise(sb, &sbi, MP_BUFFER_WRITE);
-        self->scratch_buf = sb;
-        self->scratch = (uint16_t *)sbi.buf;
+        if (width <= PICOGAME_FB_SCRATCH_MAX_W) {
+            self->scratch = picogame_fb_scratch_sram;
+        } else {
+            mp_obj_t sb = mp_obj_new_bytearray_of_zeros((size_t)width * (size_t)rows * 2u);
+            mp_buffer_info_t sbi;
+            mp_get_buffer_raise(sb, &sbi, MP_BUFFER_WRITE);
+            self->scratch_buf = sb;
+            self->scratch = (uint16_t *)sbi.buf;
+        }
         self->scratch_rows = rows;
     }
     return MP_OBJ_FROM_PTR(self);

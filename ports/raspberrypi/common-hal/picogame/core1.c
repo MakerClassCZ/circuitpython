@@ -37,6 +37,10 @@ static bool s_enabled;
 // FIFO is only touched by the SDK's launch handshake, before this loop starts.
 static volatile bool s_go;
 
+#if defined(PICOGAME_CORE1_PROBE)
+extern bool picogame_scene_refresh_async_enabled;   // Scene.c probe flag (cleared in reset below)
+#endif
+
 static void __not_in_flash_func(core1_worker)(void) {
     while (true) {
         while (!s_go) {                         // idle spin in RAM (probe; SEV/WFE polish can come later)
@@ -126,6 +130,12 @@ void picogame_core1_flash_fence(void) {
 void picogame_core1_reset(void) {
     picogame_par_split = NULL;
     s_enabled = false;
+    #if defined(PICOGAME_CORE1_PROBE) && CIRCUITPY_PICOGAME_FAST_DISPLAY
+    // Probe hygiene: pg.refresh_async(True) must NOT survive a soft reload — a stale flag
+    // makes the NEXT program run async unknowingly (measured: single-buffer games tear with
+    // a growing bottom band while their own config says async is off).
+    picogame_scene_refresh_async_enabled = false;
+    #endif
     if (s_launched) {
         multicore_reset_core1();
         s_launched = false;

@@ -134,11 +134,16 @@ static mp_obj_t canvas_mode7(size_t n, const mp_obj_t *a) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(canvas_mode7_obj, 11, 11, canvas_mode7);
 
-//|     def fill_triangles(self, verts: ReadableBuffer, colors: ReadableBuffer, n: int) -> None:
+//|     def fill_triangles(self, verts: ReadableBuffer, colors: ReadableBuffer, n: int,
+//|                        x_off: int = 0, y_off: int = 0) -> None:
 //|         """Fill `n` triangles in ONE call: `verts` = int16 x0,y0,x1,y1,x2,y2 per triangle,
 //|         `colors` = uint16 wire RGB565 per triangle. Same rasteriser as fill_triangle, but the
 //|         whole batch crosses the Python/C boundary once - the win for many small triangles
-//|         (blocky 3D, low-poly meshes) where the ~10 us per-call overhead otherwise dominates."""
+//|         (blocky 3D, low-poly meshes) where the ~10 us per-call overhead otherwise dominates.
+//|         `x_off`/`y_off` translate every vertex before clipping - pass the negated strip
+//|         origin (`y_off=-vy`) to replay one screen-space batch into each StripDraw view;
+//|         triangles fully outside the band are rejected with three compares, so the
+//|         per-strip re-submission stays cheap."""
 //|         ...
 static mp_obj_t canvas_fill_triangles(size_t na, const mp_obj_t *a) {
     picogame_canvas_obj_t *cv = cv_self(a[0]);
@@ -146,6 +151,8 @@ static mp_obj_t canvas_fill_triangles(size_t na, const mp_obj_t *a) {
     mp_get_buffer_raise(a[1], &vi, MP_BUFFER_READ);
     mp_get_buffer_raise(a[2], &ci, MP_BUFFER_READ);
     int n = mp_obj_get_int(a[3]);
+    int xo = na > 4 ? mp_obj_get_int(a[4]) : 0;
+    int yo = na > 5 ? mp_obj_get_int(a[5]) : 0;
     const int16_t *v = vi.buf;
     const uint16_t *col = ci.buf;
     int cap_v = (int)(vi.len / 12);        // 6 int16 = 12 bytes per triangle
@@ -156,13 +163,22 @@ static mp_obj_t canvas_fill_triangles(size_t na, const mp_obj_t *a) {
     if (n > cap_c) {
         n = cap_c;
     }
+    int cw = cv->w, ch = cv->h;
     for (int i = 0; i < n; i++) {
         const int16_t *p = v + i * 6;
-        picogame_canvas_fill_triangle(cv, p[0], p[1], p[2], p[3], p[4], p[5], col[i]);
+        int y0 = p[1] + yo, y1 = p[3] + yo, y2 = p[5] + yo;
+        if ((y0 < 0 && y1 < 0 && y2 < 0) || (y0 >= ch && y1 >= ch && y2 >= ch)) {
+            continue;                      // whole triangle outside this band
+        }
+        int x0 = p[0] + xo, x1 = p[2] + xo, x2 = p[4] + xo;
+        if ((x0 < 0 && x1 < 0 && x2 < 0) || (x0 >= cw && x1 >= cw && x2 >= cw)) {
+            continue;
+        }
+        picogame_canvas_fill_triangle(cv, x0, y0, x1, y1, x2, y2, col[i]);
     }
     return mp_const_none;
 }
-static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(canvas_fill_triangles_obj, 4, 4, canvas_fill_triangles);
+static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(canvas_fill_triangles_obj, 4, 6, canvas_fill_triangles);
 
 //|     def road(self, ri0: int, tab: ReadableBuffer, rl: ReadableBuffer, rr: ReadableBuffer,
 //|              d05_q8: int, d07_q8: int, colors: ReadableBuffer) -> None:
