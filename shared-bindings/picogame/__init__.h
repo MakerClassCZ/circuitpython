@@ -8,6 +8,7 @@
 
 // Defined in shared-bindings/picogame/__init__.c (consolidated with Bitmap/Sprite).
 extern const mp_obj_type_t picogame_stripdraw_type;
+extern const mp_obj_type_t picogame_triangles_type;
 
 #if CIRCUITPY_PICOGAME_ROMFS_KB > 0
 // ROMFS asset-region flash writer, implemented PORT-side (common-hal/picogame/romfs.c).

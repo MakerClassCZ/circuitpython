@@ -148,6 +148,11 @@ static void snapshot_sync(picogame_scene_obj_t *self) {
             picogame_canvas_take_dirty(MP_OBJ_TO_PTR(self->items[i]), &a, &b, &c, &d);
         } else if (kind == PICOGAME_KIND_STRIPDRAW) {
             // Immediate-mode layer: no retained state to snapshot/drain.
+        } else if (kind == PICOGAME_KIND_TRIANGLES) {
+            // Screen-space batch: drain the count-set dirty so it doesn't re-report.
+            int e, f, g, hh;
+            picogame_dirty_take(&((picogame_triangles_obj_t *)MP_OBJ_TO_PTR(self->items[i]))->dx1,
+                &e, &f, &g, &hh);
         } else {
             picogame_sprite_obj_t *s = MP_OBJ_TO_PTR(self->items[i]);
             picogame_bitmap_obj_t *bm = s->bitmap;
@@ -187,8 +192,10 @@ static void scene_add_one(picogame_scene_obj_t *self, mp_obj_t item_in, bool fix
         kind = PICOGAME_KIND_CANVAS;
     } else if (mp_obj_is_type(item_in, &picogame_stripdraw_type)) {
         kind = PICOGAME_KIND_STRIPDRAW;
+    } else if (mp_obj_is_type(item_in, &picogame_triangles_type)) {
+        kind = PICOGAME_KIND_TRIANGLES;
     } else {
-        mp_raise_TypeError(MP_ERROR_TEXT("expected a Sprite, Tilemap, Particles, Canvas or StripDraw"));
+        mp_raise_TypeError(MP_ERROR_TEXT("expected a Sprite, Tilemap, Particles, Canvas, StripDraw or Triangles"));
     }
     if (fixed) {
         kind |= PICOGAME_KIND_FIXED;

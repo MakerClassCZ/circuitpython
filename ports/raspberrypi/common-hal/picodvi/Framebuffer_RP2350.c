@@ -160,12 +160,17 @@ static uint32_t vactive_line720[VACTIVE_LEN] = {
 
 picodvi_framebuffer_obj_t *active_picodvi = NULL;
 
+// Frame counter for vblank sync (picogame pg.vblank()): the pixel-channel completion IRQ
+// fires once per FRAME (the command list wraps here), i.e. at the vertical blanking moment.
+volatile uint32_t picodvi_framebuffer_frame_count;
+
 static void __not_in_flash_func(dma_irq_handler)(void) {
     if (active_picodvi == NULL) {
         return;
     }
     uint ch_num = active_picodvi->dma_pixel_channel;
     dma_hw->intr = 1u << ch_num;
+    picodvi_framebuffer_frame_count++;
 
     // Set the read_addr back to the start and trigger the first transfer (which
     // will trigger the pixel channel).

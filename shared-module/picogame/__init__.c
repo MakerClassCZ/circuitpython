@@ -813,6 +813,41 @@ mp_obj_t picogame_blit_strip_layers(
                     mp_obj_print_exception(&mp_plat_print, exc);
                 }
             }
+        } else if (kind == PICOGAME_KIND_TRIANGLES) {
+            // Retained screen-space triangle batch: pure C per strip (no Python callback,
+            // so unlike StripDraw this path stays core1/async composable). Cheap band
+            // reject vs THIS strip, then the Canvas rasteriser through a stack view over
+            // the strip buffer. Screen-space by design: the view offset is not applied.
+            picogame_triangles_obj_t *t = MP_OBJ_TO_PTR(items[i]);
+            picogame_canvas_obj_t v;
+            v.data = buf;
+            v.data_obj = MP_OBJ_NULL;
+            v.w = region_w;
+            v.h = strip_h;
+            v.x = 0;
+            v.y = 0;
+            v.transparent = 0;
+            v.has_transparent = false;
+            picogame_canvas_dirty_reset(&v);
+            int xo = -x0;
+            int yo = -strip_top;
+            int nt = t->count;
+            const int16_t *pv = t->verts;
+            const uint16_t *pc = t->colors;
+            for (int k = 0; k < nt; k++) {
+                const int16_t *p = pv + k * 6;
+                int ay0 = p[1] + yo, ay1 = p[3] + yo, ay2 = p[5] + yo;
+                if ((ay0 < 0 && ay1 < 0 && ay2 < 0) ||
+                    (ay0 >= strip_h && ay1 >= strip_h && ay2 >= strip_h)) {
+                    continue;
+                }
+                int ax0 = p[0] + xo, ax1 = p[2] + xo, ax2 = p[4] + xo;
+                if ((ax0 < 0 && ax1 < 0 && ax2 < 0) ||
+                    (ax0 >= region_w && ax1 >= region_w && ax2 >= region_w)) {
+                    continue;
+                }
+                picogame_canvas_fill_triangle(&v, ax0, ay0, ax1, ay1, ax2, ay2, pc[k]);
+            }
         } else {
             picogame_sprite_obj_t *spr = MP_OBJ_TO_PTR(items[i]);
             if (!(spr->flags & PICOGAME_SPR_VISIBLE)) {
@@ -1095,6 +1130,88 @@ static void picogame_fb_to_rgb332_copy(uint8_t *dst, const uint16_t *src, int n)
     }
 }
 
+// Second-core compose strip for the framebuffer band split (E10): set by the bindings'
+// Framebuffer constructor when the static SRAM strip fits, else NULL (= never split).
+uint16_t *picogame_fb_scratch_alt = NULL;
+
+// One framebuffer compose band-range: everything fb_bands_job needs, by value. `mid` is
+// par_split's split point (lo + (hi-lo)/2): the half starting there runs on core1 and
+// must use the ALT scratch - selecting by `lo >= mid` needs no core-id and stays portable.
+typedef struct {
+    uint16_t *fb;
+    int fb_stride, fmt;
+    uint16_t *scr0, *scr1;
+    int scratch_rows;
+    mp_obj_t *items;
+    uint8_t *kinds;
+    size_t n;
+    int x0, y0, y1, region_w;
+    bool full_width;
+    uint16_t background;
+    int ox, oy;
+    int mid;
+    int nbands;
+} fb_bands_arg_t;
+
+// Publish one FINISHED band from a scratch strip into the fb (wire/native/RGB332,
+// full- or partial-width). Shared by the serial loop and both cores of the split.
+static void fb_publish_band(const fb_bands_arg_t *a, uint16_t *scratch, int by, int bh) {
+    uint16_t *fb = a->fb;
+    int fb_stride = a->fb_stride;
+    int region_w = a->region_w;
+    int fmt = a->fmt;
+    if (a->full_width) {
+        size_t npix = (size_t)region_w * (size_t)bh;
+        if (fmt == PICOGAME_FB_RGB332) {
+            picogame_fb_to_rgb332_copy(
+                (uint8_t *)fb + (size_t)by * (size_t)fb_stride, scratch, (int)npix);
+        } else if (fmt == PICOGAME_FB_NATIVE565) {
+            // Fold the wire->native byte-swap INTO the publish copy (no separate in-place swap).
+            picogame_fb_to_native_copy(fb + (size_t)by * (size_t)fb_stride, scratch, (int)npix);
+        } else {
+            memcpy(fb + (size_t)by * (size_t)fb_stride, scratch, npix * 2u);   // wire: HW reads as-is
+        }
+    } else if (fmt == PICOGAME_FB_RGB332) {
+        // Partial-width 8-bit: quantize row by row straight into the byte fb (strided).
+        for (int r = 0; r < bh; r++) {
+            picogame_fb_to_rgb332_copy(
+                (uint8_t *)fb + (size_t)(by + r) * (size_t)fb_stride + a->x0,
+                scratch + (size_t)r * region_w, region_w);
+        }
+    } else {
+        // Partial-width: swap the scratch in place (NATIVE), then copy row by row (strided).
+        if (fmt == PICOGAME_FB_NATIVE565) {
+            picogame_fb_to_native(scratch, region_w * bh);
+        }
+        for (int r = 0; r < bh; r++) {
+            memcpy(fb + (size_t)(by + r) * fb_stride + a->x0,
+                scratch + (size_t)r * region_w, (size_t)region_w * 2u);
+        }
+    }
+}
+
+// Compose+publish one core's share of the bands - the fork-join kernel for the E10 split.
+// Only offered to par_split when the scene has NO StripDraw (a Python callback cannot run
+// on core1), so the blit chain is pure C and the layers are read-only during the join.
+// The [lo,hi) range only tells us WHICH half we are (lo >= mid = core1); each core then
+// walks INTERLEAVED bands (core0 even, core1 odd) so the two publish streams advance down
+// the screen together - beam-sympathetic like the serial loop, instead of core1 slamming
+// the bottom half early (that showed as recurring band-boundary "teeth" on moving edges,
+// parked in one screen region by the compose-vs-scanout beat).
+static void fb_bands_job(void *argp, int lo, int hi) {
+    fb_bands_arg_t *a = argp;
+    (void)hi;
+    int parity = (lo >= a->mid) ? 1 : 0;
+    uint16_t *scratch = parity ? a->scr1 : a->scr0;
+    for (int b = parity; b < a->nbands; b += 2) {
+        int by = a->y0 + b * a->scratch_rows;
+        int bh = (a->y1 - by) < a->scratch_rows ? (a->y1 - by) : a->scratch_rows;
+        picogame_blit_strip_layers(scratch, a->region_w, by, bh, a->x0,
+            a->items, a->kinds, a->n, a->background, a->ox, a->oy);
+        fb_publish_band(a, scratch, by, bh);
+    }
+}
+
 mp_obj_t picogame_render_framebuffer(
     uint16_t *fb, int fb_stride, int fb_h, int fmt,
     uint16_t *scratch, int scratch_rows,
@@ -1129,42 +1246,42 @@ mp_obj_t picogame_render_framebuffer(
     if (scratch != NULL && scratch_rows > 0) {
         // Full-width band: rows are contiguous in BOTH scratch and fb, so the whole band publishes in
         // one pass with 4-byte-aligned pointers (fb_stride even). Partial-width rows are strided.
-        bool full_width = (x0 == 0 && region_w == fb_stride);
-        for (int by = y0; by < y1; by += scratch_rows) {
+        fb_bands_arg_t a = {
+            fb, fb_stride, fmt, scratch, picogame_fb_scratch_alt, scratch_rows,
+            items, kinds, n, x0, y0, y1, region_w,
+            (x0 == 0 && region_w == fb_stride), background, ox, oy, 0, 0
+        };
+        int nbands = (y1 - y0 + scratch_rows - 1) / scratch_rows;
+        a.nbands = nbands;
+        // E10 SPLIT: bands are independent (own scratch rows, own fb rows), so with the
+        // core1 fork-join enabled (pg.core1(True)) the band range runs on BOTH cores -
+        // IF a second scratch strip exists and the scene has no StripDraw (its Python
+        // callback cannot run on core1; those frames take the serial loop below).
+        if (picogame_par_split != NULL && a.scr1 != NULL && nbands >= 2) {
+            bool has_py = false;
+            for (size_t i = 0; i < n; i++) {
+                if ((kinds[i] & PICOGAME_KIND_MASK) == PICOGAME_KIND_STRIPDRAW) {
+                    has_py = true;
+                    break;
+                }
+            }
+            if (!has_py) {
+                a.mid = nbands >> 1;             // par_split's split point for lo=0
+                if (picogame_par_split(fb_bands_job, &a, 0, nbands)) {
+                    return MP_OBJ_NULL;
+                }
+            }
+        }
+        a.mid = nbands + 1;                      // serial: core0 scratch for every band
+        for (int b = 0; b < nbands; b++) {
+            int by = y0 + b * scratch_rows;
             int bh = (y1 - by) < scratch_rows ? (y1 - by) : scratch_rows;
             // Compose region_w x bh OFF-SCREEN into the scratch (wire order) so the beam never sees a
             // half-composited region (no sprite/HUD flicker), then publish the FINISHED band into the
             // fb. Published even on a latched exception so the fb is never left half-updated.
             mp_obj_t exc = picogame_blit_strip_layers(
                 scratch, region_w, by, bh, x0, items, kinds, n, background, ox, oy);
-            if (full_width) {
-                size_t npix = (size_t)region_w * (size_t)bh;
-                if (fmt == PICOGAME_FB_RGB332) {
-                    picogame_fb_to_rgb332_copy(
-                        (uint8_t *)fb + (size_t)by * (size_t)fb_stride, scratch, (int)npix);
-                } else if (fmt == PICOGAME_FB_NATIVE565) {
-                    // Fold the wire->native byte-swap INTO the publish copy (no separate in-place swap).
-                    picogame_fb_to_native_copy(fb + (size_t)by * (size_t)fb_stride, scratch, (int)npix);
-                } else {
-                    memcpy(fb + (size_t)by * (size_t)fb_stride, scratch, npix * 2u);   // wire: HW reads as-is
-                }
-            } else if (fmt == PICOGAME_FB_RGB332) {
-                // Partial-width 8-bit: quantize row by row straight into the byte fb (strided).
-                for (int r = 0; r < bh; r++) {
-                    picogame_fb_to_rgb332_copy(
-                        (uint8_t *)fb + (size_t)(by + r) * (size_t)fb_stride + x0,
-                        scratch + (size_t)r * region_w, region_w);
-                }
-            } else {
-                // Partial-width: swap the scratch in place (NATIVE), then copy row by row (strided).
-                if (fmt == PICOGAME_FB_NATIVE565) {
-                    picogame_fb_to_native(scratch, region_w * bh);
-                }
-                for (int r = 0; r < bh; r++) {
-                    memcpy(fb + (size_t)(by + r) * fb_stride + x0,
-                        scratch + (size_t)r * region_w, (size_t)region_w * 2u);
-                }
-            }
+            fb_publish_band(&a, scratch, by, bh);
             if (exc != MP_OBJ_NULL) {
                 return exc;   // StripDraw raised; caller re-raises (cleared stays false -> full repaint)
             }

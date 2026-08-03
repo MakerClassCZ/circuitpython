@@ -45,6 +45,7 @@ enum {
     PICOGAME_KIND_PARTICLES = 2,
     PICOGAME_KIND_CANVAS = 3,
     PICOGAME_KIND_STRIPDRAW = 4,
+    PICOGAME_KIND_TRIANGLES = 5,
     // High bit on a kind = "fixed": the item ignores the scene view offset
     // (camera), so HUD / score / dialog stay put while the world scrolls.
     PICOGAME_KIND_FIXED = 0x80,
@@ -69,6 +70,21 @@ typedef struct {
     bool faulted;
     bool always_dirty;       // True: repaint every frame (animated). False: only the dirty rect (on-change UI).
 } picogame_stripdraw_obj_t;
+
+// Triangles: a retained SCREEN-SPACE triangle batch the compositor rasterises entirely
+// in C (per strip, band-rejected) - no Python callback per strip, so unlike StripDraw it
+// stays composable by core1/async refresh. verts (int16 x0,y0,x1,y1,x2,y2 per tri) and
+// colors (uint16 wire RGB565 per tri) are CALLER-OWNED arrays (refs held for GC; fill
+// them in place). Setting `count` selects how many draw and marks the layer dirty
+// full-screen (a 3D frame repaints everything anyway).
+typedef struct {
+    mp_obj_base_t base;
+    mp_obj_t verts_obj, colors_obj;   // GC anchors for the caller's arrays
+    const int16_t *verts;
+    const uint16_t *colors;
+    uint16_t count, cap;              // cap = what the buffers can hold
+    int32_t dx1, dy1, dx2, dy2;       // dirty accumulator (count-set -> full screen)
+} picogame_triangles_obj_t;
 
 static inline int picogame_imin(int a, int b) {
     return a < b ? a : b;
@@ -174,6 +190,7 @@ typedef void (*picogame_job_t)(void *arg, int lo, int hi);
 extern bool (*picogame_par_split)(picogame_job_t fn, void *arg, int lo, int hi);
 // Port-side controls (RP2040: common-hal/picogame/core1.c; no-ops elsewhere).
 void picogame_core1_set_enabled(bool on);
+bool picogame_core1_enabled(void);
 void picogame_core1_reset(void);
 void picogame_core1_flash_fence(void);
 bool picogame_core1_submit(picogame_job_t fn, void *arg);

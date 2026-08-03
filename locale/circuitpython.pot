@@ -2220,7 +2220,7 @@ msgstr ""
 #: shared-bindings/busdisplay/BusDisplay.c shared-bindings/displayio/Bitmap.c
 #: shared-bindings/framebufferio/FramebufferDisplay.c
 #: shared-bindings/is31fl3741/FrameBuffer.c
-#: shared-bindings/rgbmatrix/RGBMatrix.c
+#: shared-bindings/rgbmatrix/RGBMatrix.c shared-module/picogame/pg_compat_mp.c
 msgid "%q must be %d-%d"
 msgstr ""
 
@@ -2306,7 +2306,7 @@ msgstr ""
 msgid "%q must be %d"
 msgstr ""
 
-#: py/argcheck.c
+#: py/argcheck.c shared-module/picogame/pg_compat_mp.c
 msgid "%q must be >= %d"
 msgstr ""
 
@@ -2316,7 +2316,8 @@ msgid "%q must be <= %d"
 msgstr ""
 
 #: py/argcheck.c py/runtime.c shared-bindings/bitmapfilter/__init__.c
-#: shared-module/audiodelays/MultiTapDelay.c shared-module/synthio/Note.c
+#: shared-module/audiodelays/MultiTapDelay.c
+#: shared-module/picogame/pg_compat_mp.c shared-module/synthio/Note.c
 #: shared-module/synthio/__init__.c
 msgid "%q must be of type %q, not %q"
 msgstr ""
@@ -4093,12 +4094,8 @@ msgstr ""
 msgid "expected a BusDisplay"
 msgstr ""
 
-#: shared-bindings/picogame/Display.c
-msgid "sprites must be Sprites"
-msgstr ""
-
-#: shared-bindings/picogame/Scene.c shared-bindings/picogame/__init__.c
-msgid "expected a Sprite, Tilemap, Particles, Canvas or StripDraw"
+#: shared-bindings/picogame/Scene.c
+msgid "expected a Sprite, Tilemap, Particles, Canvas, StripDraw or Triangles"
 msgstr ""
 
 #: shared-bindings/picogame/Scene.c
@@ -4132,6 +4129,10 @@ msgstr ""
 
 #: shared-bindings/picogame/__init__.c
 msgid "anchor must be (x, y)"
+msgstr ""
+
+#: shared-bindings/picogame/__init__.c
+msgid "expected a Sprite, Tilemap, Particles, Canvas or StripDraw"
 msgstr ""
 
 #: shared-bindings/picogame/__init__.c

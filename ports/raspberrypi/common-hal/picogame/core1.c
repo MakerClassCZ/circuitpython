@@ -20,7 +20,9 @@
 #include "py/mpconfig.h"
 #include "shared-module/picogame/__init__.h"   // prototypes + picogame_job_t for BOTH branches
 
-#if CIRCUITPY_PICOGAME_FAST_DISPLAY
+// Real worker on the SPI/fast boards AND on framebuffer boards (RP2350 Fruit Jam): the
+// E10 band split runs the fb compose on both cores, and mode7 rows split there too.
+#if CIRCUITPY_PICOGAME_FAST_DISPLAY || CIRCUITPY_PICOGAME_FRAMEBUFFER
 
 #include "pico/multicore.h"
 
@@ -40,6 +42,23 @@ static volatile bool s_go;
 #if defined(PICOGAME_CORE1_PROBE)
 extern bool picogame_scene_refresh_async_enabled;   // Scene.c probe flag (cleared in reset below)
 #endif
+
+#if CIRCUITPY_USB_HOST
+#include "common-hal/usb_host/Port.h"
+extern usb_host_port_obj_t usb_host_instance;
+#endif
+
+// core1 may already belong to someone else: the PIO-USB host runs its SOF service there
+// (Fruit Jam constructs it in board.c, permanently). Launching our worker over it froze
+// the board hard - so every enable/submit refuses when the core is spoken for.
+static bool core1_taken(void) {
+    #if CIRCUITPY_USB_HOST
+    if (usb_host_instance.dp != NULL) {
+        return true;
+    }
+    #endif
+    return false;
+}
 
 static void __not_in_flash_func(core1_worker)(void) {
     while (true) {
@@ -77,8 +96,15 @@ static bool par_split(picogame_job_t fn, void *arg, int lo, int hi) {
 }
 
 void picogame_core1_set_enabled(bool on) {
+    if (on && core1_taken()) {
+        on = false;                             // USB host owns core1: stay serial
+    }
     s_enabled = on;
     picogame_par_split = on ? par_split : NULL;
+}
+
+bool picogame_core1_enabled(void) {
+    return s_enabled;
 }
 
 // Fire-and-forget submission (the async-refresh probe): run `fn(arg, 0, 0)` on core1 and RETURN -
@@ -86,6 +112,9 @@ void picogame_core1_set_enabled(bool on) {
 // the same mailbox as par_split; par_split degrades to serial while an async job is in flight.
 bool picogame_core1_submit(picogame_job_t fn, void *arg) {
     if (s_busy) {                               // previous frame still going: caller must join first
+        return false;
+    }
+    if (core1_taken()) {                        // USB host owns core1 (see core1_taken)
         return false;
     }
     if (!s_launched) {
@@ -146,6 +175,9 @@ void picogame_core1_reset(void) {
 
 void picogame_core1_set_enabled(bool on) {
     (void)on;
+}
+bool picogame_core1_enabled(void) {
+    return false;
 }
 void picogame_core1_reset(void) {
 }

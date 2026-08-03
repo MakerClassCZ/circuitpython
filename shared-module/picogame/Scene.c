@@ -86,6 +86,10 @@ int picogame_scene_compute_dirty_rects(
                 } else {
                     d = picogame_dirty_take(&sd->dx1, &tx1, &ty1, &tx2, &ty2);
                 }
+            } else if (kind == PICOGAME_KIND_TRIANGLES) {
+                // Screen-space batch: count-set marked a full-screen dirty (clipped later).
+                picogame_triangles_obj_t *t = MP_OBJ_TO_PTR(items[i]);
+                d = picogame_dirty_take(&t->dx1, &tx1, &ty1, &tx2, &ty2);
             }
             if (d) {
                 ADD_RECT(tx1, ty1, tx2, ty2);
