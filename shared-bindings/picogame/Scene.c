@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 #include "py/runtime.h"
+#include <string.h>
 #include "shared-module/picogame/pg_compat.h"
 #include "py/objtuple.h"
 #include "py/objlist.h"
@@ -182,21 +183,7 @@ static void snapshot_sync(picogame_scene_obj_t *self) {
 //|         ...
 static void scene_add_one(picogame_scene_obj_t *self, mp_obj_t item_in, bool fixed) {
     uint8_t kind;
-    if (mp_obj_is_type(item_in, &picogame_sprite_type)) {
-        kind = PICOGAME_KIND_SPRITE;
-    } else if (mp_obj_is_type(item_in, &picogame_tilemap_type)) {
-        kind = PICOGAME_KIND_TILEMAP;
-    } else if (mp_obj_is_type(item_in, &picogame_particles_type)) {
-        kind = PICOGAME_KIND_PARTICLES;
-    } else if (mp_obj_is_type(item_in, &picogame_canvas_type)) {
-        kind = PICOGAME_KIND_CANVAS;
-    } else if (mp_obj_is_type(item_in, &picogame_stripdraw_type)) {
-        kind = PICOGAME_KIND_STRIPDRAW;
-    } else if (mp_obj_is_type(item_in, &picogame_triangles_type)) {
-        kind = PICOGAME_KIND_TRIANGLES;
-    } else {
-        mp_raise_TypeError(MP_ERROR_TEXT("expected a Sprite, Tilemap, Particles, Canvas, StripDraw or Triangles"));
-    }
+    kind = picogame_kind_of(item_in);
     if (fixed) {
         kind |= PICOGAME_KIND_FIXED;
     }
@@ -212,21 +199,9 @@ static void scene_add_one(picogame_scene_obj_t *self, mp_obj_t item_in, bool fix
     }
     self->items[self->count] = item_in;
     self->kinds[self->count] = kind;
-    // Snapshot starts "invisible" so a new sprite is detected as changed and drawn.
-    self->snap[self->count].x = 0;
-    self->snap[self->count].y = 0;
-    self->snap[self->count].w = 0;
-    self->snap[self->count].h = 0;
-    self->snap[self->count].bitmap = NULL;
-    self->snap[self->count].frame = 0;
-    self->snap[self->count].flags = 0;
-    // init the rest of the diffed fields too (m_renew doesn't zero) so the first dirty-diff
-    // doesn't compare against garbage scale/angle/seq/dither
-    self->snap[self->count].scale = 0;
-    self->snap[self->count].angle = 0;
-    self->snap[self->count].seq = 0;
-    self->snap[self->count].dither = 0;
-    self->snap[self->count].flash_color = 0;
+    // Snapshot starts all-zero ("invisible", nothing diffed against garbage - m_renew doesn't
+    // zero), so a newly added layer is detected as changed and drawn on the next refresh.
+    memset(&self->snap[self->count], 0, sizeof(picogame_snapshot_t));
     self->count++;
     // Honour "drawn on the next refresh" for EVERY kind: the zeroed snapshot covers sprites,
     // but a re-add()ed Canvas/Tilemap whose dirty flag was already consumed would otherwise

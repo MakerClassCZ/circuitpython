@@ -607,3 +607,22 @@ void picogame_canvas_text(picogame_canvas_obj_t *cv, int x, int y, const char *t
     }
     mark(cv, x0, y, x, y + fh);
 }
+
+// Fill a screen-space triangle batch with per-triangle band reject - shared by the
+// Canvas.fill_triangles binding and the compositor's Triangles layer (one loop, one place).
+void picogame_fill_triangle_batch(picogame_canvas_obj_t *cv, const int16_t *v,
+    const uint16_t *col, int n, int xo, int yo) {
+    int cw = cv->w, ch = cv->h;
+    for (int i = 0; i < n; i++) {
+        const int16_t *p = v + i * 6;
+        int y0 = p[1] + yo, y1 = p[3] + yo, y2 = p[5] + yo;
+        if ((y0 < 0 && y1 < 0 && y2 < 0) || (y0 >= ch && y1 >= ch && y2 >= ch)) {
+            continue;
+        }
+        int x0 = p[0] + xo, x1 = p[2] + xo, x2 = p[4] + xo;
+        if ((x0 < 0 && x1 < 0 && x2 < 0) || (x0 >= cw && x1 >= cw && x2 >= cw)) {
+            continue;
+        }
+        picogame_canvas_fill_triangle(cv, x0, y0, x1, y1, x2, y2, col[i]);
+    }
+}

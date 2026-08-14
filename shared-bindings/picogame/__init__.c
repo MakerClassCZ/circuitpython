@@ -86,12 +86,9 @@ static mp_obj_t picogame_bitmap_make_new(const mp_obj_type_t *type, size_t n_arg
     }
     // stride must hold the whole horizontal atlas, and the dims must fit the uint16_t fields,
     // or blits index past a row / the stored stride truncates.
-    if (width * frames > 65535 || stride > 65535) {
-        mp_raise_ValueError(MP_ERROR_TEXT("bitmap too large"));
-    }
-    if (stride < width * frames) {
-        mp_raise_ValueError(MP_ERROR_TEXT("stride too small"));
-    }
+    mp_arg_validate_int_max(width * frames, 65535, MP_QSTR_width);
+    mp_arg_validate_int_max(stride, 65535, MP_QSTR_stride);
+    mp_arg_validate_int_min(stride, width * frames, MP_QSTR_stride);
 
     mp_buffer_info_t data_info;
     mp_get_buffer_raise(args[ARG_data].u_obj, &data_info, MP_BUFFER_READ);
@@ -641,9 +638,7 @@ static mp_obj_t sprite_set_anchor(mp_obj_t self_in, mp_obj_t v) {
     size_t len;
     mp_obj_t *items;
     mp_obj_get_array(v, &len, &items);
-    if (len != 2) {
-        mp_raise_ValueError(MP_ERROR_TEXT("anchor must be (x, y)"));
-    }
+    mp_arg_validate_length(len, 2, MP_QSTR_anchor);
     self->anchor_x = anchor_to_fp(items[0]);
     self->anchor_y = anchor_to_fp(items[1]);
     self->xf_valid = 0;                              // affine cache depends on the pivot
@@ -1407,6 +1402,31 @@ static MP_DEFINE_CONST_FUN_OBJ_2(picogame_invert_obj, picogame_invert);
 //|     """Render ``sprites`` into the screen region [x0,x1) x [y0,y1) and push it
 //|     to ``display``. ``buffer`` is a reusable strip buffer (>= region_width*2 bytes)."""
 //|     ...
+
+// Map a layer object to its PICOGAME_KIND_*, or raise the one shared TypeError. Both
+// Scene.add() and pg.render() classify through here (one type chain, one message).
+uint8_t picogame_kind_of(mp_obj_t o) {
+    if (mp_obj_is_type(o, &picogame_sprite_type)) {
+        return PICOGAME_KIND_SPRITE;
+    }
+    if (mp_obj_is_type(o, &picogame_stripdraw_type)) {
+        return PICOGAME_KIND_STRIPDRAW;
+    }
+    if (mp_obj_is_type(o, &picogame_tilemap_type)) {
+        return PICOGAME_KIND_TILEMAP;
+    }
+    if (mp_obj_is_type(o, &picogame_particles_type)) {
+        return PICOGAME_KIND_PARTICLES;
+    }
+    if (mp_obj_is_type(o, &picogame_canvas_type)) {
+        return PICOGAME_KIND_CANVAS;
+    }
+    if (mp_obj_is_type(o, &picogame_triangles_type)) {
+        return PICOGAME_KIND_TRIANGLES;
+    }
+    mp_raise_TypeError(MP_ERROR_TEXT("expected a Sprite, Tilemap, Particles, Canvas, StripDraw or Triangles"));
+}
+
 static mp_obj_t picogame_render_fun(size_t n_args, const mp_obj_t *pos_args, mp_map_t *kw_args) {
     enum { ARG_display, ARG_sprites, ARG_buffer, ARG_x0, ARG_y0, ARG_x1, ARG_y1, ARG_background };
     static const mp_arg_t allowed_args[] = {
@@ -1453,25 +1473,8 @@ static mp_obj_t picogame_render_fun(size_t n_args, const mp_obj_t *pos_args, mp_
     }
     if (kinds != NULL) {
         for (size_t i = 0; i < n; i++) {
-            mp_obj_t it = items[i];
-            if (mp_obj_is_type(it, &picogame_sprite_type)) {
-                kinds[i] = PICOGAME_KIND_SPRITE;
-            } else if (mp_obj_is_type(it, &picogame_stripdraw_type)) {
-                kinds[i] = PICOGAME_KIND_STRIPDRAW;
-            } else if (mp_obj_is_type(it, &picogame_triangles_type)) {
-                kinds[i] = PICOGAME_KIND_TRIANGLES;
-            } else if (mp_obj_is_type(it, &picogame_canvas_type)) {
-                kinds[i] = PICOGAME_KIND_CANVAS;
-            } else if (mp_obj_is_type(it, &picogame_tilemap_type)) {
-                kinds[i] = PICOGAME_KIND_TILEMAP;
-            } else if (mp_obj_is_type(it, &picogame_particles_type)) {
-                kinds[i] = PICOGAME_KIND_PARTICLES;
-            } else {
-                if (n > MP_ARRAY_SIZE(kbuf)) {
-                    m_del(uint8_t, kinds, n);
-                }
-                mp_raise_TypeError(MP_ERROR_TEXT("expected a Sprite, Tilemap, Particles, Canvas or StripDraw"));
-            }
+            // (an unknown type raises from kind_of; the GC reclaims a heap `kinds`)
+            kinds[i] = picogame_kind_of(items[i]);
         }
     }
 
@@ -1542,7 +1545,7 @@ static mp_obj_t picogame_collide(size_t n_args, const mp_obj_t *args) {
         int py = mp_obj_get_int(args[5]);
         hit = (px >= x1) && (px <= x2) && (py >= y1) && (py <= y2);
     } else {
-        mp_raise_TypeError(MP_ERROR_TEXT("collide takes 6 or 8 args"));
+        mp_raise_TypeError(MP_ERROR_TEXT("argument num/types mismatch"));
     }
     return mp_obj_new_bool(hit);
 }
@@ -1687,11 +1690,9 @@ static uint32_t pg_value2d_fx(int32_t X, int32_t Y, int32_t seed) {     // X,Y Q
     uint32_t u = pg_smooth16(xf), v = pg_smooth16(yf);
     return pg_lerp16(pg_lerp16(a, b, u), pg_lerp16(c, d, u), v);
 }
-static uint32_t pg_value1d_fx(int32_t X, int32_t seed) {
-    int32_t xi = X >> 16;
-    uint32_t xf = (uint32_t)(X - (xi << 16));
-    return pg_lerp16(pg_nhash_raw(xi, 0, seed), pg_nhash_raw(xi + 1, 0, seed), pg_smooth16(xf));
-}
+// (1-D value noise == the 2-D sampler at Y=0, bit for bit: v = smooth16(0) = 0 makes the
+// outer lerp return its first argument, which is exactly lerp(hash(xi,0), hash(xi+1,0), u).
+// So the 1-D entry points below just call pg_value2d_fx(X, 0, seed) - no separate kernel.)
 #define PG_Q16(f) ((int32_t)((f) * 65536.0f))
 
 static mp_obj_t picogame_value2d_fx(size_t n_args, const mp_obj_t *pos, mp_map_t *kw) {
@@ -1709,19 +1710,17 @@ static mp_obj_t picogame_value1d_fx(size_t n_args, const mp_obj_t *pos, mp_map_t
                                      {MP_QSTR_seed, MP_ARG_INT | MP_ARG_KW_ONLY, {.u_int = 0}} };
     mp_arg_val_t a[2];
     mp_arg_parse_all(n_args, pos, kw, 2, spec, a);
-    int32_t v = pg_value1d_fx(PG_Q16(mp_obj_get_float(a[0].u_obj)), a[1].u_int);
+    int32_t v = pg_value2d_fx(PG_Q16(mp_obj_get_float(a[0].u_obj)), 0, a[1].u_int);
     return mp_obj_new_float((float)v * (1.0f / 65536.0f));
 }
 static MP_DEFINE_CONST_FUN_OBJ_KW(picogame_value1d_fx_obj, 1, picogame_value1d_fx);
 
-static mp_obj_t picogame_fbm2d_fx(size_t n_args, const mp_obj_t *pos, mp_map_t *kw) {
-    mp_arg_val_t a[6];
-    mp_arg_parse_all(n_args, pos, kw, 6, pg_fbm2d_args, a);
-    int32_t X = PG_Q16(mp_obj_get_float(a[0].u_obj)), Y = PG_Q16(mp_obj_get_float(a[1].u_obj));
-    int octaves = a[2].u_int;
-    int32_t seed = a[3].u_int;
-    int32_t lacq = (a[4].u_obj == MP_OBJ_NULL) ? (2 << 16) : PG_Q16(mp_obj_get_float(a[4].u_obj));
-    int32_t gainq = (a[5].u_obj == MP_OBJ_NULL) ? (1 << 15) : PG_Q16(mp_obj_get_float(a[5].u_obj));
+// Shared fBm octave accumulator (the 1-D entry passes Y=0; sy is then 0 every octave,
+// which the value sampler maps to the exact 1-D lattice - see the note above).
+static mp_obj_t pg_fbm_eval(int32_t X, int32_t Y, int octaves, int32_t seed,
+    const mp_arg_val_t *lac, const mp_arg_val_t *gain) {
+    int32_t lacq = (lac->u_obj == MP_OBJ_NULL) ? (2 << 16) : PG_Q16(mp_obj_get_float(lac->u_obj));
+    int32_t gainq = (gain->u_obj == MP_OBJ_NULL) ? (1 << 15) : PG_Q16(mp_obj_get_float(gain->u_obj));
     int32_t amp = 1 << 16, freq = 1 << 16;
     int64_t total = 0, norm = 0;
     for (int i = 0; i < octaves; i++) {
@@ -1733,6 +1732,13 @@ static mp_obj_t picogame_fbm2d_fx(size_t n_args, const mp_obj_t *pos, mp_map_t *
     }
     return mp_obj_new_float(norm ? (float)total / (float)norm : 0.0f);
 }
+
+static mp_obj_t picogame_fbm2d_fx(size_t n_args, const mp_obj_t *pos, mp_map_t *kw) {
+    mp_arg_val_t a[6];
+    mp_arg_parse_all(n_args, pos, kw, 6, pg_fbm2d_args, a);
+    return pg_fbm_eval(PG_Q16(mp_obj_get_float(a[0].u_obj)), PG_Q16(mp_obj_get_float(a[1].u_obj)),
+        a[2].u_int, a[3].u_int, &a[4], &a[5]);
+}
 static MP_DEFINE_CONST_FUN_OBJ_KW(picogame_fbm2d_fx_obj, 2, picogame_fbm2d_fx);
 
 static mp_obj_t picogame_fbm1d_fx(size_t n_args, const mp_obj_t *pos, mp_map_t *kw) {
@@ -1741,21 +1747,8 @@ static mp_obj_t picogame_fbm1d_fx(size_t n_args, const mp_obj_t *pos, mp_map_t *
                                      {MP_QSTR_lacunarity, MP_ARG_OBJ | MP_ARG_KW_ONLY, {.u_obj = MP_OBJ_NULL}}, {MP_QSTR_gain, MP_ARG_OBJ | MP_ARG_KW_ONLY, {.u_obj = MP_OBJ_NULL}} };
     mp_arg_val_t a[5];
     mp_arg_parse_all(n_args, pos, kw, 5, spec, a);
-    int32_t X = PG_Q16(mp_obj_get_float(a[0].u_obj));
-    int octaves = a[1].u_int;
-    int32_t seed = a[2].u_int;
-    int32_t lacq = (a[3].u_obj == MP_OBJ_NULL) ? (2 << 16) : PG_Q16(mp_obj_get_float(a[3].u_obj));
-    int32_t gainq = (a[4].u_obj == MP_OBJ_NULL) ? (1 << 15) : PG_Q16(mp_obj_get_float(a[4].u_obj));
-    int32_t amp = 1 << 16, freq = 1 << 16;
-    int64_t total = 0, norm = 0;
-    for (int i = 0; i < octaves; i++) {
-        int32_t sx = (int32_t)(((int64_t)X * freq) >> 16);
-        total += ((int64_t)amp * pg_value1d_fx(sx, seed)) >> 16;
-        norm += amp;
-        amp = (int32_t)(((int64_t)amp * gainq) >> 16);
-        freq = (int32_t)(((int64_t)freq * lacq) >> 16);
-    }
-    return mp_obj_new_float(norm ? (float)total / (float)norm : 0.0f);
+    return pg_fbm_eval(PG_Q16(mp_obj_get_float(a[0].u_obj)), 0,
+        a[1].u_int, a[2].u_int, &a[3], &a[4]);
 }
 static MP_DEFINE_CONST_FUN_OBJ_KW(picogame_fbm1d_fx_obj, 1, picogame_fbm1d_fx);
 
@@ -1801,7 +1794,7 @@ static mp_obj_t picogame_framebuffer_make_new(const mp_obj_type_t *type, size_t 
     mp_int_t width = mp_arg_validate_int_range(args[ARG_width].u_int, 1, 4096, MP_QSTR_width);
     mp_int_t height = mp_arg_validate_int_range(args[ARG_height].u_int, 1, 4096, MP_QSTR_height);
     if (args[ARG_native_rgb565].u_bool && args[ARG_rgb332].u_bool) {
-        mp_raise_ValueError(MP_ERROR_TEXT("native_rgb565 and rgb332 are exclusive"));
+        mp_arg_error_invalid(MP_QSTR_format);          // native_rgb565 and rgb332 are exclusive
     }
     bool rgb332 = args[ARG_rgb332].u_bool;
 

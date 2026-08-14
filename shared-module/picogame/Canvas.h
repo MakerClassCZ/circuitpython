@@ -62,3 +62,6 @@ void picogame_canvas_mode7(picogame_canvas_obj_t *cv, picogame_bitmap_obj_t *tex
 void picogame_blit_canvas(
     uint16_t *buf, int region_w, int strip_top, int strip_h, int x0,
     picogame_canvas_obj_t *cv, int ox, int oy);
+
+void picogame_fill_triangle_batch(picogame_canvas_obj_t *cv, const int16_t *v,
+    const uint16_t *col, int n, int xo, int yo);

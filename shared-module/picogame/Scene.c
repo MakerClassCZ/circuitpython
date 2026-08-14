@@ -40,6 +40,21 @@ static inline long rect_area(const picogame_rect_t *r) {
 // update the per-sprite snapshots. Returns the rect count (0 = nothing changed).
 // Collecting per-change rects (instead of one union) means scattered movers no
 // longer inflate the repaint to the whole screen.
+// Out-of-line rect append for compute_dirty_rects below: the old macro expanded ~30 B
+// four times; a real (noinline) call keeps each site at argument setup only.
+static __attribute__((noinline)) void add_rect(picogame_rect_t *raw, int *nr, bool *overflow,
+    int x1, int y1, int x2, int y2) {
+    if (*nr < PICOGAME_RAW_RECTS) {
+        raw[*nr].x1 = x1;
+        raw[*nr].y1 = y1;
+        raw[*nr].x2 = x2;
+        raw[*nr].y2 = y2;
+        (*nr)++;
+    } else {
+        *overflow = true;
+    }
+}
+
 int picogame_scene_compute_dirty_rects(
     mp_obj_t *items, uint8_t *kinds, picogame_snapshot_t *snap, size_t n,
     int screen_w, int screen_h, int ox, int oy,
@@ -51,11 +66,8 @@ int picogame_scene_compute_dirty_rects(
 
     // Rects are stored in SCREEN coords: non-fixed items get the view offset added
     // here (per item), fixed (HUD) items don't - so no uniform offset at the end.
-    #define ADD_RECT(ax, ay, bx, by) do { \
-        if (nr < PICOGAME_RAW_RECTS) { \
-            raw[nr].x1 = (ax) + iox; raw[nr].y1 = (ay) + ioy; \
-            raw[nr].x2 = (bx) + iox; raw[nr].y2 = (by) + ioy; nr++; \
-        } else { overflow = true; } } while (0)
+    #define ADD_RECT(ax, ay, bx, by) \
+    add_rect(raw, &nr, &overflow, (ax) + iox, (ay) + ioy, (bx) + iox, (by) + ioy)
 
     for (size_t i = 0; i < n; i++) {
         uint8_t rawk = kinds[i];

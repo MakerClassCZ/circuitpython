@@ -497,7 +497,12 @@ SRC_C += common-hal/picogame/core1.c
 # so it composes with the core1 row split). Portable C remains the fallback elsewhere.
 SRC_C += common-hal/picogame/interp.c
 CFLAGS += -DPICOGAME_HAS_INTERP=1
+# core1 / refresh_async PROBE toggles (pg.core1, pg.refresh_async): bench-only API,
+# kept OUT of production builds (~0.3 KB flash + 90 B RAM). Opt in for an A/B build:
+#   make BOARD=... PICOGAME_CORE1_PROBE=1
+ifeq ($(PICOGAME_CORE1_PROBE),1)
 CFLAGS += -DPICOGAME_CORE1_PROBE=1
+endif
 endif
 
 SRC_SDK := \

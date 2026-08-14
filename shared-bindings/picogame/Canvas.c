@@ -77,6 +77,17 @@ static picogame_canvas_obj_t *cv_self(mp_obj_t o) {
     return MP_OBJ_TO_PTR(o);
 }
 
+// Shared int-arg unpacker for the plain drawing trampolines below: every one of them is
+// "self + N ints -> void", and the inlined per-wrapper mp_obj_get_int runs cost ~70-120 B
+// each at -Os. One loop here + a tiny per-wrapper stub keeps the flash cost per method at
+// ~2 calls. n comes from the VAR_BETWEEN exact arity, so v[] is always fully written.
+static picogame_canvas_obj_t *cv_args(const mp_obj_t *a, size_t n, int *v) {
+    for (size_t i = 1; i < n; i++) {
+        v[i - 1] = mp_obj_get_int(a[i]);
+    }
+    return cv_self(a[0]);
+}
+
 //|     def clear(self, color: int) -> None: ...
 static mp_obj_t canvas_clear(mp_obj_t self_in, mp_obj_t color) {
     picogame_canvas_clear(cv_self(self_in), mp_obj_get_int(color));
@@ -86,15 +97,16 @@ static MP_DEFINE_CONST_FUN_OBJ_2(canvas_clear_obj, canvas_clear);
 
 //|     def pixel(self, x: int, y: int, color: int) -> None: ...
 static mp_obj_t canvas_pixel(size_t n, const mp_obj_t *a) {
-    picogame_canvas_pixel(cv_self(a[0]), mp_obj_get_int(a[1]), mp_obj_get_int(a[2]), mp_obj_get_int(a[3]));
+    int v[3];
+    picogame_canvas_pixel(cv_args(a, n, v), v[0], v[1], v[2]);
     return mp_const_none;
 }
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(canvas_pixel_obj, 4, 4, canvas_pixel);
 
 //|     def fill_rect(self, x: int, y: int, w: int, h: int, color: int) -> None: ...
 static mp_obj_t canvas_fill_rect(size_t n, const mp_obj_t *a) {
-    picogame_canvas_fill_rect(cv_self(a[0]), mp_obj_get_int(a[1]), mp_obj_get_int(a[2]),
-        mp_obj_get_int(a[3]), mp_obj_get_int(a[4]), mp_obj_get_int(a[5]));
+    int v[5];
+    picogame_canvas_fill_rect(cv_args(a, n, v), v[0], v[1], v[2], v[3], v[4]);
     return mp_const_none;
 }
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(canvas_fill_rect_obj, 6, 6, canvas_fill_rect);
@@ -163,19 +175,7 @@ static mp_obj_t canvas_fill_triangles(size_t na, const mp_obj_t *a) {
     if (n > cap_c) {
         n = cap_c;
     }
-    int cw = cv->w, ch = cv->h;
-    for (int i = 0; i < n; i++) {
-        const int16_t *p = v + i * 6;
-        int y0 = p[1] + yo, y1 = p[3] + yo, y2 = p[5] + yo;
-        if ((y0 < 0 && y1 < 0 && y2 < 0) || (y0 >= ch && y1 >= ch && y2 >= ch)) {
-            continue;                      // whole triangle outside this band
-        }
-        int x0 = p[0] + xo, x1 = p[2] + xo, x2 = p[4] + xo;
-        if ((x0 < 0 && x1 < 0 && x2 < 0) || (x0 >= cw && x1 >= cw && x2 >= cw)) {
-            continue;
-        }
-        picogame_canvas_fill_triangle(cv, x0, y0, x1, y1, x2, y2, col[i]);
-    }
+    picogame_fill_triangle_batch(cv, v, col, n, xo, yo);
     return mp_const_none;
 }
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(canvas_fill_triangles_obj, 4, 6, canvas_fill_triangles);
@@ -193,37 +193,26 @@ static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(canvas_fill_triangles_obj, 4, 6, canv
 //|         ...
 static mp_obj_t canvas_vspans(size_t na, const mp_obj_t *a) {
     picogame_canvas_obj_t *cv = cv_self(a[0]);
-    mp_buffer_info_t x0i, x1i, ti, bi, ci;
-    mp_get_buffer_raise(a[1], &x0i, MP_BUFFER_READ);
-    mp_get_buffer_raise(a[2], &x1i, MP_BUFFER_READ);
-    mp_get_buffer_raise(a[3], &ti, MP_BUFFER_READ);
-    mp_get_buffer_raise(a[4], &bi, MP_BUFFER_READ);
-    mp_get_buffer_raise(a[5], &ci, MP_BUFFER_READ);
+    // five equal-shape uint16 arrays in a row: fetch + shortest-length fold in one loop
+    mp_buffer_info_t bi5[5];
+    size_t cap = (size_t)-1;
+    for (int i = 0; i < 5; i++) {
+        mp_get_buffer_raise(a[1 + i], &bi5[i], MP_BUFFER_READ);
+        if (bi5[i].len < cap) {
+            cap = bi5[i].len;
+        }
+    }
     int n = mp_obj_get_int(a[6]);
     int xo = na > 7 ? mp_obj_get_int(a[7]) : 0;
     int yo = na > 8 ? mp_obj_get_int(a[8]) : 0;
-    // never read past the shortest array
-    size_t cap = x0i.len;
-    if (x1i.len < cap) {
-        cap = x1i.len;
-    }
-    if (ti.len < cap) {
-        cap = ti.len;
-    }
-    if (bi.len < cap) {
-        cap = bi.len;
-    }
-    if (ci.len < cap) {
-        cap = ci.len;
-    }
     if (n > (int)(cap >> 1)) {
-        n = (int)(cap >> 1);
+        n = (int)(cap >> 1);                     // never read past the shortest array
     }
-    const uint16_t *x0s = x0i.buf;
-    const uint16_t *x1s = x1i.buf;
-    const uint16_t *tops = ti.buf;
-    const uint16_t *bots = bi.buf;
-    const uint16_t *cols = ci.buf;
+    const uint16_t *x0s = bi5[0].buf;
+    const uint16_t *x1s = bi5[1].buf;
+    const uint16_t *tops = bi5[2].buf;
+    const uint16_t *bots = bi5[3].buf;
+    const uint16_t *cols = bi5[4].buf;
     int cw = cv->w, ch = cv->h;
     for (int i = 0; i < n; i++) {
         int t = tops[i] + yo, b = bots[i] + yo;
@@ -271,88 +260,88 @@ static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(canvas_road_obj, 8, 8, canvas_road);
 
 //|     def rect(self, x: int, y: int, w: int, h: int, color: int) -> None: ...
 static mp_obj_t canvas_rect(size_t n, const mp_obj_t *a) {
-    picogame_canvas_rect(cv_self(a[0]), mp_obj_get_int(a[1]), mp_obj_get_int(a[2]),
-        mp_obj_get_int(a[3]), mp_obj_get_int(a[4]), mp_obj_get_int(a[5]));
+    int v[5];
+    picogame_canvas_rect(cv_args(a, n, v), v[0], v[1], v[2], v[3], v[4]);
     return mp_const_none;
 }
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(canvas_rect_obj, 6, 6, canvas_rect);
 
 //|     def line(self, x0: int, y0: int, x1: int, y1: int, color: int) -> None: ...
 static mp_obj_t canvas_line(size_t n, const mp_obj_t *a) {
-    picogame_canvas_line(cv_self(a[0]), mp_obj_get_int(a[1]), mp_obj_get_int(a[2]),
-        mp_obj_get_int(a[3]), mp_obj_get_int(a[4]), mp_obj_get_int(a[5]));
+    int v[5];
+    picogame_canvas_line(cv_args(a, n, v), v[0], v[1], v[2], v[3], v[4]);
     return mp_const_none;
 }
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(canvas_line_obj, 6, 6, canvas_line);
 
 //|     def fill_circle(self, cx: int, cy: int, r: int, color: int) -> None: ...
 static mp_obj_t canvas_fill_circle(size_t n, const mp_obj_t *a) {
-    picogame_canvas_fill_circle(cv_self(a[0]), mp_obj_get_int(a[1]), mp_obj_get_int(a[2]),
-        mp_obj_get_int(a[3]), mp_obj_get_int(a[4]));
+    int v[4];
+    picogame_canvas_fill_circle(cv_args(a, n, v), v[0], v[1], v[2], v[3]);
     return mp_const_none;
 }
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(canvas_fill_circle_obj, 5, 5, canvas_fill_circle);
 
 //|     def circle(self, cx: int, cy: int, r: int, color: int) -> None: ...
 static mp_obj_t canvas_circle(size_t n, const mp_obj_t *a) {
-    picogame_canvas_circle(cv_self(a[0]), mp_obj_get_int(a[1]), mp_obj_get_int(a[2]),
-        mp_obj_get_int(a[3]), mp_obj_get_int(a[4]));
+    int v[4];
+    picogame_canvas_circle(cv_args(a, n, v), v[0], v[1], v[2], v[3]);
     return mp_const_none;
 }
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(canvas_circle_obj, 5, 5, canvas_circle);
 
 //|     def ring(self, cx: int, cy: int, r: int, thickness: int, color: int) -> None: ...
 static mp_obj_t canvas_ring(size_t n, const mp_obj_t *a) {
-    picogame_canvas_ring(cv_self(a[0]), mp_obj_get_int(a[1]), mp_obj_get_int(a[2]),
-        mp_obj_get_int(a[3]), mp_obj_get_int(a[4]), mp_obj_get_int(a[5]));
+    int v[5];
+    picogame_canvas_ring(cv_args(a, n, v), v[0], v[1], v[2], v[3], v[4]);
     return mp_const_none;
 }
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(canvas_ring_obj, 6, 6, canvas_ring);
 
 //|     def triangle(self, x0: int, y0: int, x1: int, y1: int, x2: int, y2: int, color: int) -> None: ...
 static mp_obj_t canvas_triangle(size_t n, const mp_obj_t *a) {
-    picogame_canvas_triangle(cv_self(a[0]), mp_obj_get_int(a[1]), mp_obj_get_int(a[2]),
-        mp_obj_get_int(a[3]), mp_obj_get_int(a[4]), mp_obj_get_int(a[5]), mp_obj_get_int(a[6]), mp_obj_get_int(a[7]));
+    int v[7];
+    picogame_canvas_triangle(cv_args(a, n, v), v[0], v[1], v[2], v[3], v[4], v[5], v[6]);
     return mp_const_none;
 }
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(canvas_triangle_obj, 8, 8, canvas_triangle);
 
 //|     def fill_triangle(self, x0: int, y0: int, x1: int, y1: int, x2: int, y2: int, color: int) -> None: ...
 static mp_obj_t canvas_fill_triangle(size_t n, const mp_obj_t *a) {
-    picogame_canvas_fill_triangle(cv_self(a[0]), mp_obj_get_int(a[1]), mp_obj_get_int(a[2]),
-        mp_obj_get_int(a[3]), mp_obj_get_int(a[4]), mp_obj_get_int(a[5]), mp_obj_get_int(a[6]), mp_obj_get_int(a[7]));
+    int v[7];
+    picogame_canvas_fill_triangle(cv_args(a, n, v), v[0], v[1], v[2], v[3], v[4], v[5], v[6]);
     return mp_const_none;
 }
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(canvas_fill_triangle_obj, 8, 8, canvas_fill_triangle);
 
 //|     def ellipse(self, cx: int, cy: int, rx: int, ry: int, color: int) -> None: ...
 static mp_obj_t canvas_ellipse(size_t n, const mp_obj_t *a) {
-    picogame_canvas_ellipse(cv_self(a[0]), mp_obj_get_int(a[1]), mp_obj_get_int(a[2]),
-        mp_obj_get_int(a[3]), mp_obj_get_int(a[4]), mp_obj_get_int(a[5]));
+    int v[5];
+    picogame_canvas_ellipse(cv_args(a, n, v), v[0], v[1], v[2], v[3], v[4]);
     return mp_const_none;
 }
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(canvas_ellipse_obj, 6, 6, canvas_ellipse);
 
 //|     def fill_ellipse(self, cx: int, cy: int, rx: int, ry: int, color: int) -> None: ...
 static mp_obj_t canvas_fill_ellipse(size_t n, const mp_obj_t *a) {
-    picogame_canvas_fill_ellipse(cv_self(a[0]), mp_obj_get_int(a[1]), mp_obj_get_int(a[2]),
-        mp_obj_get_int(a[3]), mp_obj_get_int(a[4]), mp_obj_get_int(a[5]));
+    int v[5];
+    picogame_canvas_fill_ellipse(cv_args(a, n, v), v[0], v[1], v[2], v[3], v[4]);
     return mp_const_none;
 }
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(canvas_fill_ellipse_obj, 6, 6, canvas_fill_ellipse);
 
 //|     def fill_round_rect(self, x: int, y: int, w: int, h: int, r: int, color: int) -> None: ...
 static mp_obj_t canvas_fill_round_rect(size_t n, const mp_obj_t *a) {
-    picogame_canvas_fill_round_rect(cv_self(a[0]), mp_obj_get_int(a[1]), mp_obj_get_int(a[2]),
-        mp_obj_get_int(a[3]), mp_obj_get_int(a[4]), mp_obj_get_int(a[5]), mp_obj_get_int(a[6]));
+    int v[6];
+    picogame_canvas_fill_round_rect(cv_args(a, n, v), v[0], v[1], v[2], v[3], v[4], v[5]);
     return mp_const_none;
 }
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(canvas_fill_round_rect_obj, 7, 7, canvas_fill_round_rect);
 
 //|     def frame3d(self, x: int, y: int, w: int, h: int, light: int, dark: int) -> None: ...
 static mp_obj_t canvas_frame3d(size_t n, const mp_obj_t *a) {
-    picogame_canvas_frame3d(cv_self(a[0]), mp_obj_get_int(a[1]), mp_obj_get_int(a[2]),
-        mp_obj_get_int(a[3]), mp_obj_get_int(a[4]), mp_obj_get_int(a[5]), mp_obj_get_int(a[6]));
+    int v[6];
+    picogame_canvas_frame3d(cv_args(a, n, v), v[0], v[1], v[2], v[3], v[4], v[5]);
     return mp_const_none;
 }
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(canvas_frame3d_obj, 7, 7, canvas_frame3d);

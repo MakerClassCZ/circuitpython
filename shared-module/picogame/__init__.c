@@ -831,23 +831,7 @@ mp_obj_t picogame_blit_strip_layers(
             picogame_canvas_dirty_reset(&v);
             int xo = -x0;
             int yo = -strip_top;
-            int nt = t->count;
-            const int16_t *pv = t->verts;
-            const uint16_t *pc = t->colors;
-            for (int k = 0; k < nt; k++) {
-                const int16_t *p = pv + k * 6;
-                int ay0 = p[1] + yo, ay1 = p[3] + yo, ay2 = p[5] + yo;
-                if ((ay0 < 0 && ay1 < 0 && ay2 < 0) ||
-                    (ay0 >= strip_h && ay1 >= strip_h && ay2 >= strip_h)) {
-                    continue;
-                }
-                int ax0 = p[0] + xo, ax1 = p[2] + xo, ax2 = p[4] + xo;
-                if ((ax0 < 0 && ax1 < 0 && ax2 < 0) ||
-                    (ax0 >= region_w && ax1 >= region_w && ax2 >= region_w)) {
-                    continue;
-                }
-                picogame_canvas_fill_triangle(&v, ax0, ay0, ax1, ay1, ax2, ay2, pc[k]);
-            }
+            picogame_fill_triangle_batch(&v, t->verts, t->colors, t->count, xo, yo);
         } else {
             picogame_sprite_obj_t *spr = MP_OBJ_TO_PTR(items[i]);
             if (!(spr->flags & PICOGAME_SPR_VISIBLE)) {

@@ -34,7 +34,8 @@ void common_hal_picogame_display_construct(picogame_display_obj_t *self,
 
     // The fast path needs raw SPI access; only FourWire SPI buses are supported.
     if (!mp_obj_is_type(display->bus.bus, &fourwire_fourwire_type)) {
-        mp_raise_ValueError(MP_ERROR_TEXT("fast Display needs a FourWire SPI display"));
+        mp_raise_TypeError_varg(MP_ERROR_TEXT("%q must be of type %q, not %q"),
+            MP_QSTR_display, MP_QSTR_FourWire, mp_obj_get_type(display->bus.bus)->name);
     }
     fourwire_fourwire_obj_t *fw = MP_OBJ_TO_PTR(display->bus.bus);
     self->spi = fw->bus->peripheral;
