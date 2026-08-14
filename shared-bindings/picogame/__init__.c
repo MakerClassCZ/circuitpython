@@ -1106,6 +1106,13 @@ static MP_DEFINE_CONST_FUN_OBJ_3(picogame_rgb565_obj, picogame_rgb565);
 // [t*2] near, [t*2+1] side colour. top/bot/col: uint16 write buffers (len>=ncols); dist: int32 write
 // buffer (perpendicular distance, 16.16). The int64 divides/muls are ONLY the per-column setup
 // (O(ncols)); the DDA step loop is pure 32-bit. Mirrors the Python float fallback closely.
+// Optional arg 17 (runs - ONE uint16 write buffer, len>=5*ncols, laid out as five ncols-long
+// planes [x0s | x1s | tops | bots | colors]): also emit the RLE-MERGED wall runs (adjacent equal
+// columns fused; x in PIXELS = column*stride) and return the run count. The planes feed
+// Canvas.vspans directly as memoryview slices. This hoists picogame_ray's per-frame Python merge
+// loop into the same C pass (measured 2-6.5 ms/frame of interpreted merge at stride=1 on RP2040).
+// Callers clamp the LAST run's x1 to the screen width (stride rounding can overshoot by <stride).
+// Without it: returns None.
 static mp_obj_t picogame_raycast(size_t n_args, const mp_obj_t *args) {
     mp_buffer_info_t mi, wi, ti, bi, ci, di;
     mp_get_buffer_raise(args[0], &mi, MP_BUFFER_READ);
@@ -1125,7 +1132,20 @@ static mp_obj_t picogame_raycast(size_t n_args, const mp_obj_t *args) {
     mp_get_buffer_raise(args[14], &bi, MP_BUFFER_WRITE);
     mp_get_buffer_raise(args[15], &ci, MP_BUFFER_WRITE);
     mp_get_buffer_raise(args[16], &di, MP_BUFFER_WRITE);
-    (void)stride;
+    uint16_t *r0 = NULL, *r1 = NULL, *rt = NULL, *rb = NULL, *rcol = NULL;
+    if (n_args >= 18) {                            // run outputs requested
+        mp_buffer_info_t q;
+        mp_get_buffer_raise(args[17], &q, MP_BUFFER_WRITE);
+        int cap = (int)(q.len / 10);               // five uint16 planes
+        if (ncols > cap) {
+            ncols = cap;                           // never write past the run planes
+        }
+        r0 = q.buf;
+        r1 = r0 + cap;
+        rt = r1 + cap;
+        rb = rt + cap;
+        rcol = rb + cap;
+    }
     const uint8_t *map = mi.buf;
     const uint16_t *wc = wi.buf;
     int wc_types = (int)(wi.len >> 2);
@@ -1207,9 +1227,26 @@ static mp_obj_t picogame_raycast(size_t n_args, const mp_obj_t *args) {
         rdx += srx;                                // accumulate ray direction for the next column (no overflow)
         rdy += sry;
     }
+    if (r0 && ncols > 0) {
+        // post-pass RLE over the just-written (cache-hot) column arrays: one flush point
+        int nr = 0;
+        int rstart = 0;
+        for (int c = 1; c <= ncols; c++) {
+            if (c == ncols || top[c] != top[rstart] || bot[c] != bot[rstart] || col[c] != col[rstart]) {
+                r0[nr] = (uint16_t)(rstart * stride);
+                r1[nr] = (uint16_t)(c * stride);
+                rt[nr] = top[rstart];
+                rb[nr] = bot[rstart];
+                rcol[nr] = col[rstart];
+                nr++;
+                rstart = c;
+            }
+        }
+        return MP_OBJ_NEW_SMALL_INT(nr);
+    }
     return mp_const_none;
 }
-static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(picogame_raycast_obj, 17, 17, picogame_raycast);
+static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(picogame_raycast_obj, 17, 18, picogame_raycast);
 
 #if defined(PICOGAME_CORE1_PROBE)
 // core1(on) - PROBE toggle: route splittable kernels (mode7 rows for now) through the second-core

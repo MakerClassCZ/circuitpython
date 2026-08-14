@@ -180,6 +180,66 @@ static mp_obj_t canvas_fill_triangles(size_t na, const mp_obj_t *a) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(canvas_fill_triangles_obj, 4, 6, canvas_fill_triangles);
 
+//|     def vspans(self, x0s: ReadableBuffer, x1s: ReadableBuffer, tops: ReadableBuffer,
+//|                bots: ReadableBuffer, colors: ReadableBuffer, n: int,
+//|                x_off: int = 0, y_off: int = 0) -> None:
+//|         """Fill `n` vertical colour spans in ONE call: span i covers x0s[i]..x1s[i] (exclusive)
+//|         by tops[i]..bots[i] (exclusive) in colour colors[i] - all five are uint16 arrays.
+//|         The batch primitive for column renderers (a raycaster's merged wall runs): the whole
+//|         span list crosses the Python/C boundary once per strip instead of once per span.
+//|         `x_off`/`y_off` translate every span before clipping - pass the negated strip origin
+//|         (x_off=-vx, y_off=-vy) to replay one screen-space batch into each StripDraw view;
+//|         spans outside the band are rejected with two compares."""
+//|         ...
+static mp_obj_t canvas_vspans(size_t na, const mp_obj_t *a) {
+    picogame_canvas_obj_t *cv = cv_self(a[0]);
+    mp_buffer_info_t x0i, x1i, ti, bi, ci;
+    mp_get_buffer_raise(a[1], &x0i, MP_BUFFER_READ);
+    mp_get_buffer_raise(a[2], &x1i, MP_BUFFER_READ);
+    mp_get_buffer_raise(a[3], &ti, MP_BUFFER_READ);
+    mp_get_buffer_raise(a[4], &bi, MP_BUFFER_READ);
+    mp_get_buffer_raise(a[5], &ci, MP_BUFFER_READ);
+    int n = mp_obj_get_int(a[6]);
+    int xo = na > 7 ? mp_obj_get_int(a[7]) : 0;
+    int yo = na > 8 ? mp_obj_get_int(a[8]) : 0;
+    // never read past the shortest array
+    size_t cap = x0i.len;
+    if (x1i.len < cap) {
+        cap = x1i.len;
+    }
+    if (ti.len < cap) {
+        cap = ti.len;
+    }
+    if (bi.len < cap) {
+        cap = bi.len;
+    }
+    if (ci.len < cap) {
+        cap = ci.len;
+    }
+    if (n > (int)(cap >> 1)) {
+        n = (int)(cap >> 1);
+    }
+    const uint16_t *x0s = x0i.buf;
+    const uint16_t *x1s = x1i.buf;
+    const uint16_t *tops = ti.buf;
+    const uint16_t *bots = bi.buf;
+    const uint16_t *cols = ci.buf;
+    int cw = cv->w, ch = cv->h;
+    for (int i = 0; i < n; i++) {
+        int t = tops[i] + yo, b = bots[i] + yo;
+        if (b <= 0 || t >= ch || b <= t) {
+            continue;                      // span outside this band
+        }
+        int x0 = x0s[i] + xo, x1 = x1s[i] + xo;
+        if (x1 <= 0 || x0 >= cw || x1 <= x0) {
+            continue;
+        }
+        picogame_canvas_fill_rect(cv, x0, t, x1 - x0, b - t, cols[i]);
+    }
+    return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(canvas_vspans_obj, 7, 9, canvas_vspans);
+
 //|     def road(self, ri0: int, tab: ReadableBuffer, rl: ReadableBuffer, rr: ReadableBuffer,
 //|              d05_q8: int, d07_q8: int, colors: ReadableBuffer) -> None:
 //|         """Draw one racing-road strip (OutRun-style) from precomputed tables - the whole
@@ -372,6 +432,7 @@ static const mp_rom_map_elem_t picogame_canvas_locals_dict_table[] = {
     { MP_ROM_QSTR(MP_QSTR_blit), MP_ROM_PTR(&canvas_blit_obj) },
     { MP_ROM_QSTR(MP_QSTR_mode7), MP_ROM_PTR(&canvas_mode7_obj) },
     { MP_ROM_QSTR(MP_QSTR_fill_triangles), MP_ROM_PTR(&canvas_fill_triangles_obj) },
+    { MP_ROM_QSTR(MP_QSTR_vspans), MP_ROM_PTR(&canvas_vspans_obj) },
     { MP_ROM_QSTR(MP_QSTR_road), MP_ROM_PTR(&canvas_road_obj) },
     { MP_ROM_QSTR(MP_QSTR_rect), MP_ROM_PTR(&canvas_rect_obj) },
     { MP_ROM_QSTR(MP_QSTR_line), MP_ROM_PTR(&canvas_line_obj) },
