@@ -794,7 +794,7 @@ msgstr ""
 #: shared-bindings/i2cioexpander/IOPin.c shared-bindings/mipidsi/Display.c
 #: shared-bindings/pwmio/PWMOut.c shared-bindings/supervisor/__init__.c
 #: shared-module/aurora_epaper/aurora_framebuffer.c
-#: shared-module/lvfontio/OnDiskFont.c shared-module/picogame/pg_compat_mp.c
+#: shared-module/lvfontio/OnDiskFont.c
 msgid "Invalid %q"
 msgstr ""
 
@@ -1565,14 +1565,6 @@ msgstr ""
 msgid "Number of data_pins must be %d or %d, not %d"
 msgstr ""
 
-#: ports/espressif/common-hal/picogame/Display.c
-msgid "rgb444 fast Display not supported on this port yet"
-msgstr ""
-
-#: ports/espressif/common-hal/picogame/Display.c
-msgid "fast Display needs a FourWire SPI display"
-msgstr ""
-
 #: ports/espressif/common-hal/pulseio/PulseIn.c
 msgid "pop from an empty PulseIn"
 msgstr ""
@@ -1816,7 +1808,7 @@ msgstr ""
 
 #: ports/raspberrypi/bindings/cyw43/__init__.c py/argcheck.c py/objexcept.c
 #: shared-bindings/bitmapfilter/__init__.c shared-bindings/canio/CAN.c
-#: shared-bindings/digitalio/Pull.c shared-bindings/picogame/__init__.c
+#: shared-bindings/digitalio/Pull.c shared-bindings/picogame/Sprite.c
 #: shared-bindings/supervisor/__init__.c shared-module/audiofilters/Filter.c
 #: shared-module/displayio/__init__.c shared-module/synthio/Synthesizer.c
 msgid "%q must be of type %q or %q, not %q"
@@ -2318,7 +2310,7 @@ msgid "%q must be >= %d"
 msgstr ""
 
 #: py/argcheck.c shared-bindings/gifio/GifWriter.c
-#: shared-module/gifio/OnDiskGif.c shared-module/picogame/pg_compat_mp.c
+#: shared-module/gifio/OnDiskGif.c
 msgid "%q must be <= %d"
 msgstr ""
 
@@ -2335,7 +2327,6 @@ msgid "%q length must be <= %d"
 msgstr ""
 
 #: py/argcheck.c shared-bindings/usb_hid/Device.c
-#: shared-module/picogame/pg_compat_mp.c
 msgid "%q length must be %d"
 msgstr ""
 
@@ -2872,9 +2863,9 @@ msgstr ""
 msgid "schedule queue full"
 msgstr ""
 
-#: py/modstruct.c shared-bindings/picogame/Canvas.c
-#: shared-bindings/picogame/__init__.c shared-module/picogame/__init__.c
-#: shared-module/struct/__init__.c
+#: py/modstruct.c shared-bindings/picogame/Bitmap.c
+#: shared-bindings/picogame/Canvas.c shared-bindings/picogame/Framebuffer.c
+#: shared-module/picogame/__init__.c shared-module/struct/__init__.c
 msgid "buffer too small"
 msgstr ""
 
@@ -4090,34 +4081,13 @@ msgstr ""
 msgid "Specify exactly one of data0 or data_pins"
 msgstr ""
 
-#: shared-bindings/picogame/Display.c shared-bindings/picogame/Scene.c
-#: shared-bindings/picogame/__init__.c
-msgid "expected a BusDisplay"
+#: shared-bindings/picobench/__init__.c
+msgid "kernel id out of range"
 msgstr ""
 
-#: shared-bindings/picogame/Scene.c
-msgid "scene full"
-msgstr ""
-
-#: shared-bindings/picogame/Scene.c
-msgid "item not in scene"
-msgstr ""
-
-#: shared-bindings/picogame/__init__.c shared-module/msgpack/__init__.c
-#: supervisor/shared/settings.c
+#: shared-bindings/picogame/Bitmap.c shared-bindings/picogame/__init__.c
+#: shared-module/msgpack/__init__.c supervisor/shared/settings.c
 msgid "Invalid format"
-msgstr ""
-
-#: shared-bindings/picogame/__init__.c
-msgid "PAL8 needs a palette"
-msgstr ""
-
-#: shared-bindings/picogame/__init__.c
-msgid "palette is empty"
-msgstr ""
-
-#: shared-bindings/picogame/__init__.c
-msgid "expected a Sprite, Tilemap, Particles, Canvas, StripDraw or Triangles"
 msgstr ""
 
 #: shared-bindings/picogame/__init__.c

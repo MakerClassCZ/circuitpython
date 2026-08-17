@@ -8,9 +8,6 @@
 
 #include "py/obj.h"
 
-// Defined in shared-bindings/picogame/__init__.c (consolidated with Bitmap/Sprite).
-extern const mp_obj_type_t picogame_stripdraw_type;
-extern const mp_obj_type_t picogame_triangles_type;
 
 #ifndef CIRCUITPY_PICOGAME_ROMFS
 #define CIRCUITPY_PICOGAME_ROMFS (0)

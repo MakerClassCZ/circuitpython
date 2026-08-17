@@ -31,14 +31,14 @@ void common_hal_picogame_display_construct(picogame_display_obj_t *self,
     // ignore it: a no-op would leave the panel in RGB565 while the caller expects 444 (garbled
     // output / wrong byte count). The rpi backend implements it; until this one does, fail loud.
     if (rgb444) {
-        mp_raise_NotImplementedError(MP_ERROR_TEXT("rgb444 fast Display not supported on this port yet"));
+        mp_arg_error_invalid(MP_QSTR_rgb444);    // not implemented on this port yet
     }
     self->rgb444 = false;
 
     // The fast path queues raw DMA on the display's SPI device; only FourWire
     // SPI buses expose one.
     if (!mp_obj_is_type(display->bus.bus, &fourwire_fourwire_type)) {
-        mp_raise_ValueError(MP_ERROR_TEXT("fast Display needs a FourWire SPI display"));
+        mp_arg_error_invalid(MP_QSTR_display);   // the fast backend drives a FourWire SPI panel only
     }
     fourwire_fourwire_obj_t *fw = MP_OBJ_TO_PTR(display->bus.bus);
     self->spi = common_hal_busio_spi_get_device_handle(fw->bus);

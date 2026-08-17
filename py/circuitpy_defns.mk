@@ -639,6 +639,11 @@ endif
 # All possible sources are listed here, and are filtered by SRC_PATTERNS.
 SRC_BINDINGS_ENUMS = \
 $(filter $(SRC_PATTERNS), \
+	picogame/Bitmap.c \
+	picogame/Sprite.c \
+	picogame/StripDraw.c \
+	picogame/Triangles.c \
+	picogame/Framebuffer.c \
 	_bleio/Address.c \
 	_bleio/Attribute.c \
 	_bleio/ScanEntry.c \

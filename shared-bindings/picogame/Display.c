@@ -43,7 +43,7 @@ static mp_obj_t picogame_display_make_new(const mp_obj_type_t *type, size_t n_ar
 
     mp_obj_t native = mp_obj_cast_to_native_base(args[ARG_display].u_obj, &busdisplay_busdisplay_type);
     if (!mp_obj_is_type(native, &busdisplay_busdisplay_type)) {
-        mp_raise_TypeError(MP_ERROR_TEXT("expected a BusDisplay"));
+        mp_arg_validate_type(native, &busdisplay_busdisplay_type, MP_QSTR_display);
     }
     picogame_display_obj_t *self = mp_obj_malloc(picogame_display_obj_t, type);
     common_hal_picogame_display_construct(self, MP_OBJ_TO_PTR(native), args[ARG_rgb444].u_bool);

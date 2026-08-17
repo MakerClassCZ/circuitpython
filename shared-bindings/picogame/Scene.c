@@ -57,7 +57,7 @@ static mp_obj_t scene_resolve_target(mp_obj_t disp, bool *fast, bool *fb_target)
     // renderer treats self->display as a busdisplay_busdisplay_obj_t directly.
     mp_obj_t native = mp_obj_cast_to_native_base(disp, &busdisplay_busdisplay_type);
     if (!mp_obj_is_type(native, &busdisplay_busdisplay_type)) {
-        mp_raise_TypeError(MP_ERROR_TEXT("expected a BusDisplay"));
+        mp_arg_validate_type(native, &busdisplay_busdisplay_type, MP_QSTR_display);
     }
     return native;
 }
@@ -191,7 +191,7 @@ static void scene_add_one(picogame_scene_obj_t *self, mp_obj_t item_in, bool fix
     }
     if (self->count >= self->cap) {
         if (self->cap >= 0x8000) {                 // next doubling overflows uint16_t -> m_renew(0) shrink
-            mp_raise_RuntimeError(MP_ERROR_TEXT("scene full"));
+            m_malloc_fail((size_t)self->cap * 2);   // next doubling overflows the count type
         }
         uint16_t new_cap = self->cap * 2;
         self->items = m_renew(mp_obj_t, self->items, self->cap, new_cap);
@@ -261,7 +261,7 @@ static mp_obj_t picogame_scene_remove(mp_obj_t self_in, mp_obj_t item_in) {
         self->cleared = false;   // full repaint next refresh: background covers where it was
         return mp_const_none;
     }
-    mp_raise_ValueError(MP_ERROR_TEXT("item not in scene"));
+    mp_arg_error_invalid(MP_QSTR_item);
 }
 static MP_DEFINE_CONST_FUN_OBJ_2(picogame_scene_remove_obj, picogame_scene_remove);
 
