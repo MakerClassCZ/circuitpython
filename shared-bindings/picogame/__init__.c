@@ -1436,6 +1436,20 @@ uint8_t picogame_kind_of(mp_obj_t o) {
     mp_raise_TypeError(MP_ERROR_TEXT("expected a Sprite, Tilemap, Particles, Canvas, StripDraw or Triangles"));
 }
 
+#if CIRCUITPY_PICOGAME_FRAMEBUFFER
+// SRAM compose strips, port-allocated on first use (see the scratch comment in make_new).
+// port_malloc(dma_capable=true) is the point: on a PSRAM board the Python heap lives in PSRAM,
+// but this asks the port for INTERNAL SRAM. Two strips - the second is for the core1 band split,
+// where each core composes into its own. They are sized to the widest Framebuffer built so far
+// and kept (the pointers survive a soft reload, so the next run REUSES them instead of allocating
+// again); a board that never builds a Framebuffer pays nothing, which a .bss array could not do.
+static uint16_t *picogame_fb_scratch_sram;
+static uint16_t *picogame_fb_scratch_sram2;
+static size_t picogame_fb_scratch_px;        // pixels per strip currently allocated (0 = none)
+extern uint16_t *picogame_fb_scratch_alt;    // shared-module split hook (NULL = never split)
+
+#endif
+
 static mp_obj_t picogame_render_fun(size_t n_args, const mp_obj_t *pos_args, mp_map_t *kw_args) {
     enum { ARG_display, ARG_sprites, ARG_buffer, ARG_x0, ARG_y0, ARG_x1, ARG_y1, ARG_background };
     static const mp_arg_t allowed_args[] = {
@@ -1491,8 +1505,16 @@ static mp_obj_t picogame_render_fun(size_t n_args, const mp_obj_t *pos_args, mp_
     if (fbt != NULL) {
         // Framebuffer target: composite the region straight into it (no strip buffer, no
         // bus). Same compositor as the SPI path; re-raise a latched StripDraw exception.
+        // The SRAM strips are module-level and may have been re-allocated (grown) since this
+        // Framebuffer was built, so read them now rather than trusting a cached pointer; an
+        // object on the heap fallback keeps its own buffer (scratch_buf holds the reference).
+        uint16_t *scratch = fbt->scratch;
+        if (fbt->scratch_buf == mp_const_none && picogame_fb_scratch_sram != NULL) {
+            scratch = picogame_fb_scratch_sram;
+            picogame_fb_scratch_alt = picogame_fb_scratch_sram2;
+        }
         mp_obj_t exc = picogame_render_framebuffer(fbt->fb, fbt->width, fbt->height, fbt->fmt,
-            fbt->scratch, fbt->scratch_rows,
+            scratch, fbt->scratch_rows,
             items, kinds, n,
             args[ARG_x0].u_int, args[ARG_y0].u_int, args[ARG_x1].u_int, args[ARG_y1].u_int,
             args[ARG_background].u_int, 0, 0);
@@ -1784,13 +1806,29 @@ static MP_DEFINE_CONST_FUN_OBJ_KW(picogame_fbm1d_fx_obj, 1, picogame_fbm1d_fx);
 //|     width: int
 //|     height: int
 //|     """Target size in pixels (read-only)."""
-// Static SRAM compose strip (see the scratch comment in make_new). 640*16*2 = 20 KB .bss,
-// only on CIRCUITPY_PICOGAME_FRAMEBUFFER builds (fb boards have the SRAM to spare).
-#define PICOGAME_FB_SCRATCH_MAX_W 640
-static uint16_t picogame_fb_scratch_sram[PICOGAME_FB_SCRATCH_MAX_W * PICOGAME_FB_SCRATCH_H];
-// Second strip for the E10 core1 band split (each core composes into its own scratch).
-static uint16_t picogame_fb_scratch_sram2[PICOGAME_FB_SCRATCH_MAX_W * PICOGAME_FB_SCRATCH_H];
-extern uint16_t *picogame_fb_scratch_alt;    // shared-module split hook (NULL = never split)
+// Grow (or first allocate) both strips to `px` pixels each. False = keep what we had.
+static bool picogame_fb_scratch_reserve(size_t px) {
+    if (picogame_fb_scratch_px >= px) {
+        return true;
+    }
+    uint16_t *a = port_malloc(px * 2u, true);    // true = must be internal SRAM, not PSRAM
+    if (a == NULL) {
+        return false;
+    }
+    uint16_t *b = port_malloc(px * 2u, true);
+    if (b == NULL) {
+        port_free(a);
+        return false;
+    }
+    if (picogame_fb_scratch_sram != NULL) {
+        port_free(picogame_fb_scratch_sram);
+        port_free(picogame_fb_scratch_sram2);
+    }
+    picogame_fb_scratch_sram = a;
+    picogame_fb_scratch_sram2 = b;
+    picogame_fb_scratch_px = px;
+    return true;
+}
 
 static mp_obj_t picogame_framebuffer_make_new(const mp_obj_type_t *type, size_t n_args,
     size_t n_kw, const mp_obj_t *all_args) {
@@ -1835,9 +1873,9 @@ static mp_obj_t picogame_framebuffer_make_new(const mp_obj_type_t *type, size_t 
     //
     // The scratch must be FAST memory: on a PSRAM-heap board (Fruit Jam) a heap bytearray
     // lands in external PSRAM and every compose write pays QSPI latency (measured 8.7 vs
-    // 64+ MB/s SRAM; a full-res StripDraw frame ballooned refresh to ~30-38 ms). One static
-    // SRAM strip serves every Framebuffer (compose is synchronous) up to 640 px wide; wider
-    // targets fall back to the heap.
+    // 64+ MB/s SRAM; a full-res StripDraw frame ballooned refresh to ~30-38 ms). One SRAM
+    // strip serves every Framebuffer (compose is synchronous); if the port cannot give us
+    // SRAM, fall back to a heap buffer - slower on PSRAM boards, but correct everywhere.
     self->scratch_buf = mp_const_none;
     self->scratch = NULL;
     self->scratch_rows = 0;
@@ -1846,10 +1884,11 @@ static mp_obj_t picogame_framebuffer_make_new(const mp_obj_type_t *type, size_t 
         if (rows > height) {
             rows = height;
         }
-        if (width <= PICOGAME_FB_SCRATCH_MAX_W) {
+        if (picogame_fb_scratch_reserve((size_t)width * (size_t)rows)) {
             self->scratch = picogame_fb_scratch_sram;
             picogame_fb_scratch_alt = picogame_fb_scratch_sram2;
         } else {
+            picogame_fb_scratch_alt = NULL;      // no matching second strip -> never split bands
             mp_obj_t sb = mp_obj_new_bytearray_of_zeros((size_t)width * (size_t)rows * 2u);
             mp_buffer_info_t sbi;
             mp_get_buffer_raise(sb, &sbi, MP_BUFFER_WRITE);
@@ -1896,6 +1935,7 @@ MP_DEFINE_CONST_OBJ_TYPE(
 #include "extmod/vfs.h"
 #include "extmod/vfs_rom.h"
 #include "supervisor/filesystem.h"
+#include "supervisor/port.h"      // port_malloc: internal-SRAM compose strips on PSRAM boards
 #include "py/objarray.h"
 #include "py/stream.h"
 #include "py/mperrno.h"
