@@ -11,7 +11,7 @@
 
 #include "py/mpconfig.h"
 
-#if CIRCUITPY_PICOGAME_ROMFS_KB > 0
+#if CIRCUITPY_PICOGAME_ROMFS
 
 #include "shared-bindings/picogame/__init__.h"
 #include "supervisor/internal_flash.h"
@@ -30,4 +30,4 @@ void common_hal_picogame_romfs_erase_sector(uint32_t flash_offset) {
     supervisor_flash_post_write();
 }
 
-#endif // CIRCUITPY_PICOGAME_ROMFS_KB > 0
+#endif // CIRCUITPY_PICOGAME_ROMFS

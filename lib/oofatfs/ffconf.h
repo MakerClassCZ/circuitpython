@@ -85,7 +85,9 @@
 /* This option switches fast seek function. (0:Disable or 1:Enable) */
 
 
+#ifndef FF_USE_EXPAND
 #define FF_USE_EXPAND   0
+#endif
 /* This option switches f_expand function. (0:Disable or 1:Enable) */
 
 

@@ -7,7 +7,7 @@
 // pg_compat.h — the small CircuitPython core-API delta the picogame engine relies on,
 // OWNED BY THE ENGINE (not injected by a build-level force-`-include`). On CircuitPython
 // this is a pure pass-through (every symbol is native); on a bare MicroPython build it
-// supplies the ~9-symbol delta CP added over MicroPython. This lets the SAME engine C
+// supplies the ~12-symbol delta CP added over MicroPython. This lets the SAME engine C
 // compile on both without a per-build shim impersonating CircuitPython.
 //
 // Engine TUs `#include "shared-module/picogame/pg_compat.h"` where they use any of these
@@ -35,7 +35,10 @@
 #endif
 
 mp_int_t mp_arg_validate_int_min(mp_int_t i, mp_int_t min, qstr arg_name);
+mp_int_t mp_arg_validate_int_max(mp_int_t i, mp_int_t max, qstr arg_name);
 mp_int_t mp_arg_validate_int_range(mp_int_t i, mp_int_t min, mp_int_t max, qstr arg_name);
+mp_uint_t mp_arg_validate_length(mp_uint_t length, mp_uint_t required_length, qstr arg_name);
+NORETURN void mp_arg_error_invalid(qstr arg_name);
 mp_obj_t mp_arg_validate_type(mp_obj_t obj, const mp_obj_type_t *type, qstr arg_name);
 NORETURN void mp_raise_ValueError_varg(mp_rom_error_text_t fmt, ...);
 NORETURN void mp_raise_TypeError_varg(mp_rom_error_text_t fmt, ...);

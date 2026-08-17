@@ -118,6 +118,10 @@ void port_internal_flash_flush(void) {
     supervisor_flash_post_write();
 }
 
+const uint8_t *port_internal_flash_xip_address(uint32_t block) {
+    return (const uint8_t *)(XIP_BASE + CIRCUITPY_CIRCUITPY_DRIVE_START_ADDR + block * FILESYSTEM_BLOCK_SIZE);
+}
+
 mp_uint_t supervisor_flash_read_blocks(uint8_t *dest, uint32_t block, uint32_t num_blocks) {
     port_internal_flash_flush(); // we never read out of the cache, so we have to write it if dirty
     memcpy(dest,

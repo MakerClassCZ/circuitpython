@@ -29,6 +29,15 @@ void supervisor_flash_init_vfs(struct _fs_user_mount_t *vfs);
 void supervisor_flash_flush(void);
 void supervisor_flash_release_cache(void);
 
+// Memory-mapped address of a CIRCUITPY drive block (a FatFs sector number as seen by the
+// filesystem: the fake MBR and any leading partition are accounted for here), or NULL when the
+// drive is not memory-mapped on this port. Ports with XIP internal flash implement
+// port_internal_flash_xip_address(); everything else gets the NULL default.
+const uint8_t *supervisor_flash_xip_address(uint32_t fatfs_sector);
+// Port hook behind it (weak NULL default in supervisor/shared/flash.c): mapped address of a
+// CIRCUITPY drive block, block 0 = the first block after the fake MBR / leading partition.
+const uint8_t *port_internal_flash_xip_address(uint32_t block);
+
 void supervisor_flash_set_extended(bool extended);
 bool supervisor_flash_get_extended(void);
 void supervisor_flash_update_extended(void);

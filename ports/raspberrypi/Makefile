@@ -482,10 +482,8 @@ SRC_C += shared/runtime/gchelper_native.c
 
 # picogame ROMFS asset region: the port-side sector writer for pg.romfs_program()
 # (no shared-bindings twin, so plain SRC_C rather than SRC_COMMON_HAL).
-ifneq ($(CIRCUITPY_PICOGAME_ROMFS_KB),)
-ifneq ($(CIRCUITPY_PICOGAME_ROMFS_KB),0)
+ifeq ($(CIRCUITPY_PICOGAME_ROMFS),1)
 SRC_C += common-hal/picogame/romfs.c
-endif
 endif
 
 # picogame core1 fork-join PROBE (rp2-only): the second core runs half of a splittable kernel
@@ -502,6 +500,10 @@ CFLAGS += -DPICOGAME_HAS_INTERP=1
 #   make BOARD=... PICOGAME_CORE1_PROBE=1
 ifeq ($(PICOGAME_CORE1_PROBE),1)
 CFLAGS += -DPICOGAME_CORE1_PROBE=1
+endif
+# FAT layout PROBE (pg.fat_layout): bench-only, measures file fragmentation on CIRCUITPY.
+ifeq ($(PICOGAME_FAT_PROBE),1)
+CFLAGS += -DPICOGAME_FAT_PROBE=1 -DFF_USE_EXPAND=1
 endif
 endif
 

@@ -608,13 +608,22 @@ ifneq ($(CIRCUITPY_PICOGAME_FPU),)
 CFLAGS += -DCIRCUITPY_PICOGAME_FPU=$(CIRCUITPY_PICOGAME_FPU)
 endif
 
-# ROMFS-XIP asset region size (KB), carved between the NVM sector and the FAT drive: game assets
-# stay FILES yet blit straight from XIP flash at 0 heap (review/romfs-xip-implementation-plan.md).
-# 0 (default) = the whole feature is compiled out (universal build keeps only
-# picogame.ROMFS_SUPPORTED=False, ~30 B). A game-flavor board sets e.g. 64. NOTE: changing the
-# value moves the FAT drive start -> CIRCUITPY reformats on first boot (document per board).
-CIRCUITPY_PICOGAME_ROMFS_KB ?= 0
-CFLAGS += -DCIRCUITPY_PICOGAME_ROMFS_KB=$(CIRCUITPY_PICOGAME_ROMFS_KB)
+# ROMFS-XIP asset region: game assets stay FILES yet blit straight from XIP flash at 0 heap
+# (review/romfs-xip-implementation-plan.md). The region lives in the firmware region's TAIL
+# SLACK - the image sits at the 4 KB-aligned end of the firmware image (__flash_binary_end) and
+# may grow to the end of the FLASH_FIRMWARE region. The FAT drive start does NOT move (one
+# universal firmware, no reformat); capacity = whatever the build leaves free (a board wanting
+# more grows CIRCUITPY_FIRMWARE_SIZE, shrinking the FAT drive); a firmware update orphans the
+# image (the header magic check then reports it absent - just re-run romfs_program).
+# 0 (default) = compiled out (picogame.ROMFS_SUPPORTED=False, ~30 B); 1 = on (~3.6 KB flash).
+CIRCUITPY_PICOGAME_ROMFS ?= 0
+CFLAGS += -DCIRCUITPY_PICOGAME_ROMFS=$(CIRCUITPY_PICOGAME_ROMFS)
+# FAT-XIP: pg.xip_map(path) - a 0-copy read-only memoryview over a CONTIGUOUS file on the
+# internal-flash CIRCUITPY drive (assets stay ordinary files; fragmented -> OSError, caller falls
+# back). Needs a memory-mapped drive: ports set it to 1 where port_internal_flash_xip_address()
+# exists (raspberrypi). ~0.4 KB flash.
+CIRCUITPY_PICOGAME_XIP_MAP ?= 0
+CFLAGS += -DCIRCUITPY_PICOGAME_XIP_MAP=$(CIRCUITPY_PICOGAME_XIP_MAP)
 # Full-frame RAM-framebuffer render backend (picogame_render_framebuffer): for scanout-buffer
 # platforms that composite into a RAM framebuffer instead of an SPI strip bus (RP2350 DVI/HSTX
 # like the Adafruit Fruit Jam, the desktop sim, the WASM playground). Off by default so

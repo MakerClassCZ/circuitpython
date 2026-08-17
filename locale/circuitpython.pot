@@ -794,7 +794,7 @@ msgstr ""
 #: shared-bindings/i2cioexpander/IOPin.c shared-bindings/mipidsi/Display.c
 #: shared-bindings/pwmio/PWMOut.c shared-bindings/supervisor/__init__.c
 #: shared-module/aurora_epaper/aurora_framebuffer.c
-#: shared-module/lvfontio/OnDiskFont.c
+#: shared-module/lvfontio/OnDiskFont.c shared-module/picogame/pg_compat_mp.c
 msgid "Invalid %q"
 msgstr ""
 
@@ -1570,7 +1570,6 @@ msgid "rgb444 fast Display not supported on this port yet"
 msgstr ""
 
 #: ports/espressif/common-hal/picogame/Display.c
-#: ports/raspberrypi/common-hal/picogame/Display.c
 msgid "fast Display needs a FourWire SPI display"
 msgstr ""
 
@@ -1956,6 +1955,14 @@ msgstr ""
 msgid "All timers for this pin are in use"
 msgstr ""
 
+#: ports/raspberrypi/common-hal/picogame/Display.c py/argcheck.c py/runtime.c
+#: shared-bindings/bitmapfilter/__init__.c
+#: shared-module/audiodelays/MultiTapDelay.c
+#: shared-module/picogame/pg_compat_mp.c shared-module/synthio/Note.c
+#: shared-module/synthio/__init__.c
+msgid "%q must be of type %q, not %q"
+msgstr ""
+
 #: ports/raspberrypi/common-hal/rotaryio/IncrementalEncoder.c
 msgid "Pins must be sequential GPIO pins"
 msgstr ""
@@ -2294,7 +2301,7 @@ msgid "extra keyword arguments given"
 msgstr ""
 
 #: py/argcheck.c shared-bindings/_stage/__init__.c
-#: shared-bindings/digitalio/DigitalInOut.c
+#: shared-bindings/digitalio/DigitalInOut.c shared-bindings/picogame/__init__.c
 msgid "argument num/types mismatch"
 msgstr ""
 
@@ -2311,15 +2318,8 @@ msgid "%q must be >= %d"
 msgstr ""
 
 #: py/argcheck.c shared-bindings/gifio/GifWriter.c
-#: shared-module/gifio/OnDiskGif.c
+#: shared-module/gifio/OnDiskGif.c shared-module/picogame/pg_compat_mp.c
 msgid "%q must be <= %d"
-msgstr ""
-
-#: py/argcheck.c py/runtime.c shared-bindings/bitmapfilter/__init__.c
-#: shared-module/audiodelays/MultiTapDelay.c
-#: shared-module/picogame/pg_compat_mp.c shared-module/synthio/Note.c
-#: shared-module/synthio/__init__.c
-msgid "%q must be of type %q, not %q"
 msgstr ""
 
 #: py/argcheck.c
@@ -2335,6 +2335,7 @@ msgid "%q length must be <= %d"
 msgstr ""
 
 #: py/argcheck.c shared-bindings/usb_hid/Device.c
+#: shared-module/picogame/pg_compat_mp.c
 msgid "%q length must be %d"
 msgstr ""
 
@@ -4095,10 +4096,6 @@ msgid "expected a BusDisplay"
 msgstr ""
 
 #: shared-bindings/picogame/Scene.c
-msgid "expected a Sprite, Tilemap, Particles, Canvas, StripDraw or Triangles"
-msgstr ""
-
-#: shared-bindings/picogame/Scene.c
 msgid "scene full"
 msgstr ""
 
@@ -4112,14 +4109,6 @@ msgid "Invalid format"
 msgstr ""
 
 #: shared-bindings/picogame/__init__.c
-msgid "bitmap too large"
-msgstr ""
-
-#: shared-bindings/picogame/__init__.c
-msgid "stride too small"
-msgstr ""
-
-#: shared-bindings/picogame/__init__.c
 msgid "PAL8 needs a palette"
 msgstr ""
 
@@ -4128,19 +4117,11 @@ msgid "palette is empty"
 msgstr ""
 
 #: shared-bindings/picogame/__init__.c
-msgid "anchor must be (x, y)"
+msgid "expected a Sprite, Tilemap, Particles, Canvas, StripDraw or Triangles"
 msgstr ""
 
 #: shared-bindings/picogame/__init__.c
-msgid "expected a Sprite, Tilemap, Particles, Canvas or StripDraw"
-msgstr ""
-
-#: shared-bindings/picogame/__init__.c
-msgid "collide takes 6 or 8 args"
-msgstr ""
-
-#: shared-bindings/picogame/__init__.c
-msgid "native_rgb565 and rgb332 are exclusive"
+msgid "fragmented"
 msgstr ""
 
 #: shared-bindings/ps2io/Ps2.c

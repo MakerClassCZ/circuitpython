@@ -42,6 +42,24 @@ mp_int_t mp_arg_validate_int_min(mp_int_t i, mp_int_t min, qstr arg_name) {
     return i;
 }
 
+mp_int_t mp_arg_validate_int_max(mp_int_t i, mp_int_t max, qstr arg_name) {
+    if (i > max) {
+        mp_raise_ValueError_varg(MP_ERROR_TEXT("%q must be <= %d"), arg_name, max);
+    }
+    return i;
+}
+
+mp_uint_t mp_arg_validate_length(mp_uint_t length, mp_uint_t required_length, qstr arg_name) {
+    if (length != required_length) {
+        mp_raise_ValueError_varg(MP_ERROR_TEXT("%q length must be %d"), arg_name, required_length);
+    }
+    return length;
+}
+
+NORETURN void mp_arg_error_invalid(qstr arg_name) {
+    mp_raise_ValueError_varg(MP_ERROR_TEXT("Invalid %q"), arg_name);
+}
+
 mp_int_t mp_arg_validate_int_range(mp_int_t i, mp_int_t min, mp_int_t max, qstr arg_name) {
     if (i < min || i > max) {
         mp_raise_ValueError_varg(MP_ERROR_TEXT("%q must be %d-%d"), arg_name, min, max);
