@@ -1,5 +1,7 @@
 // This file is part of the CircuitPython project: https://circuitpython.org
 //
+// SPDX-FileCopyrightText: Copyright (c) 2026 Vladimir Smitka
+//
 // SPDX-License-Identifier: MIT
 //
 // picogame Canvas: a RAM RGB565 surface (any size) you draw primitives into,

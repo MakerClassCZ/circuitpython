@@ -1,5 +1,7 @@
 // This file is part of the CircuitPython project: https://circuitpython.org
 //
+// SPDX-FileCopyrightText: Copyright (c) 2026 Vladimir Smitka
+//
 // SPDX-License-Identifier: MIT
 
 #include "py/runtime.h"   // brings in the board config (CIRCUITPY_PICOGAME_FAST_DISPLAY)
@@ -28,6 +30,7 @@
 //|         4096 colours instead of 65536 - which PAL8 art doesn't notice. The panel controller
 //|         must support COLMOD 12-bit (ST7789/ST7735 do; ILI9341 does NOT)."""
 //|         ...
+//|
 static mp_obj_t picogame_display_make_new(const mp_obj_type_t *type, size_t n_args,
     size_t n_kw, const mp_obj_t *all_args) {
     enum { ARG_display, ARG_rgb444 };
@@ -67,6 +70,8 @@ static mp_obj_t picogame_display_make_new(const mp_obj_type_t *type, size_t n_ar
 //|         StripDraw/Canvas/Tilemap/Particles): this is the low-level double-buffered
 //|         sprite push. For mixed layer kinds use a ``Scene`` or ``picogame.render()``."""
 //|         ...
+//|
+//|
 static mp_obj_t picogame_display_render(size_t n_args, const mp_obj_t *pos_args, mp_map_t *kw_args) {
     enum { ARG_sprites, ARG_buffer_a, ARG_buffer_b, ARG_x0, ARG_y0, ARG_x1, ARG_y1, ARG_background };
     static const mp_arg_t allowed_args[] = {

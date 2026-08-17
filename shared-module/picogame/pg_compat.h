@@ -1,5 +1,7 @@
 // This file is part of the CircuitPython project: https://circuitpython.org
 //
+// SPDX-FileCopyrightText: Copyright (c) 2026 Vladimir Smitka
+//
 // SPDX-License-Identifier: MIT
 //
 // pg_compat.h — the small CircuitPython core-API delta the picogame engine relies on,

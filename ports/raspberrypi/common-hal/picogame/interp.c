@@ -1,5 +1,7 @@
 // This file is part of the CircuitPython project: https://circuitpython.org
 //
+// SPDX-FileCopyrightText: Copyright (c) 2026 Vladimir Smitka
+//
 // SPDX-License-Identifier: MIT
 
 // Mode-7 inner row via the SIO INTERPOLATOR (RP2040 + RP2350). The interpolator does the

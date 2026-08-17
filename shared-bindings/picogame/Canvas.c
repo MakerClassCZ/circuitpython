@@ -1,5 +1,7 @@
 // This file is part of the CircuitPython project: https://circuitpython.org
 //
+// SPDX-FileCopyrightText: Copyright (c) 2026 Vladimir Smitka
+//
 // SPDX-License-Identifier: MIT
 
 #include "py/runtime.h"
@@ -14,12 +16,19 @@
 //|     primitives into it; only redrawn areas repaint. Colors are wire-order
 //|     (use picogame.rgb565)."""
 //|
-//|     def __init__(self, width: int, height: int, *, transparent: Optional[int] = None,
-//|                  buffer: Optional[WriteableBuffer] = None) -> None:
+//|     def __init__(
+//|         self,
+//|         width: int,
+//|         height: int,
+//|         *,
+//|         transparent: Optional[int] = None,
+//|         buffer: Optional[WriteableBuffer] = None,
+//|     ) -> None:
 //|         """If ``buffer`` is given (>= width*height*2 bytes, e.g. a memoryview from
 //|         picogame_arena), the Canvas draws into it instead of allocating its own -
 //|         lets you pre-allocate big surfaces once and dodge heap fragmentation."""
 //|         ...
+//|
 static mp_obj_t picogame_canvas_make_new(const mp_obj_type_t *type, size_t n_args,
     size_t n_kw, const mp_obj_t *all_args) {
     enum { ARG_width, ARG_height, ARG_transparent, ARG_buffer };
@@ -89,13 +98,16 @@ static picogame_canvas_obj_t *cv_args(const mp_obj_t *a, size_t n, int *v) {
 }
 
 //|     def clear(self, color: int) -> None: ...
+//|
 static mp_obj_t canvas_clear(mp_obj_t self_in, mp_obj_t color) {
     picogame_canvas_clear(cv_self(self_in), mp_obj_get_int(color));
     return mp_const_none;
 }
 static MP_DEFINE_CONST_FUN_OBJ_2(canvas_clear_obj, canvas_clear);
 
+//|
 //|     def pixel(self, x: int, y: int, color: int) -> None: ...
+//|
 static mp_obj_t canvas_pixel(size_t n, const mp_obj_t *a) {
     int v[3];
     picogame_canvas_pixel(cv_args(a, n, v), v[0], v[1], v[2]);
@@ -103,7 +115,9 @@ static mp_obj_t canvas_pixel(size_t n, const mp_obj_t *a) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(canvas_pixel_obj, 4, 4, canvas_pixel);
 
+//|
 //|     def fill_rect(self, x: int, y: int, w: int, h: int, color: int) -> None: ...
+//|
 static mp_obj_t canvas_fill_rect(size_t n, const mp_obj_t *a) {
     int v[5];
     picogame_canvas_fill_rect(cv_args(a, n, v), v[0], v[1], v[2], v[3], v[4]);
@@ -111,11 +125,20 @@ static mp_obj_t canvas_fill_rect(size_t n, const mp_obj_t *a) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(canvas_fill_rect_obj, 6, 6, canvas_fill_rect);
 
-//|     def blit(self, bitmap: Bitmap, x: int, y: int, frame: int = 0,
-//|              flip_x: bool = False, flip_y: bool = False) -> None:
-//|         """Stamp frame `frame` of `bitmap` into the canvas at (x, y), honouring its transparent
+//|
+//|     def blit(
+//|         self,
+//|         bitmap: Bitmap,
+//|         x: int,
+//|         y: int,
+//|         frame: int = 0,
+//|         flip_x: bool = False,
+//|         flip_y: bool = False,
+//|     ) -> None:
+//|         """Stamp frame ``frame`` of ``bitmap`` into the canvas at (x, y), honouring its transparent
 //|         key. The retained way to bake an image (icon, portrait, rendered text) into a panel."""
 //|         ...
+//|
 static mp_obj_t canvas_blit(size_t n, const mp_obj_t *a) {
     picogame_bitmap_obj_t *bm = MP_OBJ_TO_PTR(
         mp_arg_validate_type(a[1], &picogame_bitmap_type, MP_QSTR_bitmap));
@@ -129,12 +152,24 @@ static mp_obj_t canvas_blit(size_t n, const mp_obj_t *a) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(canvas_blit_obj, 4, 7, canvas_blit);
 
-//|     def mode7(self, texture: Bitmap, horizon: int, y_off: int, z: int, rx0: int,
-//|               ry0: int, rsx: int, rsy: int, cam_x: int, cam_y: int) -> None:
-//|         """Fill rows below `horizon` with a perspective ground plane (Mode-7) of
-//|         `texture` (power-of-2 dims). The int args are 16.16 fixed-point camera
+//|     def mode7(
+//|         self,
+//|         texture: Bitmap,
+//|         horizon: int,
+//|         y_off: int,
+//|         z: int,
+//|         rx0: int,
+//|         ry0: int,
+//|         rsx: int,
+//|         rsy: int,
+//|         cam_x: int,
+//|         cam_y: int,
+//|     ) -> None:
+//|         """Fill rows below ``horizon`` with a perspective ground plane (Mode-7) of
+//|         ``texture`` (power-of-2 dims). The int args are 16.16 fixed-point camera
 //|         terms; use the picogame_mode7 helper to compute them from angle/pos/fov."""
 //|         ...
+//|
 static mp_obj_t canvas_mode7(size_t n, const mp_obj_t *a) {
     picogame_bitmap_obj_t *tex = MP_OBJ_TO_PTR(
         mp_arg_validate_type(a[1], &picogame_bitmap_type, MP_QSTR_texture));
@@ -146,17 +181,24 @@ static mp_obj_t canvas_mode7(size_t n, const mp_obj_t *a) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(canvas_mode7_obj, 11, 11, canvas_mode7);
 
-//|     def fill_triangles(self, verts: ReadableBuffer, colors: ReadableBuffer, n: int,
-//|                        x_off: int = 0, y_off: int = 0) -> None:
-//|         """Fill `n` triangles in ONE call: `verts` = int16 x0,y0,x1,y1,x2,y2 per triangle,
-//|         `colors` = uint16 wire RGB565 per triangle. Same rasteriser as fill_triangle, but the
+//|     def fill_triangles(
+//|         self,
+//|         verts: ReadableBuffer,
+//|         colors: ReadableBuffer,
+//|         n: int,
+//|         x_off: int = 0,
+//|         y_off: int = 0,
+//|     ) -> None:
+//|         """Fill ``n`` triangles in ONE call: ``verts`` = int16 x0,y0,x1,y1,x2,y2 per triangle,
+//|         ``colors`` = uint16 wire RGB565 per triangle. Same rasteriser as fill_triangle, but the
 //|         whole batch crosses the Python/C boundary once - the win for many small triangles
 //|         (blocky 3D, low-poly meshes) where the ~10 us per-call overhead otherwise dominates.
-//|         `x_off`/`y_off` translate every vertex before clipping - pass the negated strip
-//|         origin (`y_off=-vy`) to replay one screen-space batch into each StripDraw view;
+//|         ``x_off``/``y_off`` translate every vertex before clipping - pass the negated strip
+//|         origin (``y_off=-vy``) to replay one screen-space batch into each StripDraw view;
 //|         triangles fully outside the band are rejected with three compares, so the
 //|         per-strip re-submission stays cheap."""
 //|         ...
+//|
 static mp_obj_t canvas_fill_triangles(size_t na, const mp_obj_t *a) {
     picogame_canvas_obj_t *cv = cv_self(a[0]);
     mp_buffer_info_t vi, ci;
@@ -180,17 +222,26 @@ static mp_obj_t canvas_fill_triangles(size_t na, const mp_obj_t *a) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(canvas_fill_triangles_obj, 4, 6, canvas_fill_triangles);
 
-//|     def vspans(self, x0s: ReadableBuffer, x1s: ReadableBuffer, tops: ReadableBuffer,
-//|                bots: ReadableBuffer, colors: ReadableBuffer, n: int,
-//|                x_off: int = 0, y_off: int = 0) -> None:
-//|         """Fill `n` vertical colour spans in ONE call: span i covers x0s[i]..x1s[i] (exclusive)
+//|     def vspans(
+//|         self,
+//|         x0s: ReadableBuffer,
+//|         x1s: ReadableBuffer,
+//|         tops: ReadableBuffer,
+//|         bots: ReadableBuffer,
+//|         colors: ReadableBuffer,
+//|         n: int,
+//|         x_off: int = 0,
+//|         y_off: int = 0,
+//|     ) -> None:
+//|         """Fill ``n`` vertical colour spans in ONE call: span i covers x0s[i]..x1s[i] (exclusive)
 //|         by tops[i]..bots[i] (exclusive) in colour colors[i] - all five are uint16 arrays.
 //|         The batch primitive for column renderers (a raycaster's merged wall runs): the whole
 //|         span list crosses the Python/C boundary once per strip instead of once per span.
-//|         `x_off`/`y_off` translate every span before clipping - pass the negated strip origin
+//|         ``x_off``/``y_off`` translate every span before clipping - pass the negated strip origin
 //|         (x_off=-vx, y_off=-vy) to replay one screen-space batch into each StripDraw view;
 //|         spans outside the band are rejected with two compares."""
 //|         ...
+//|
 static mp_obj_t canvas_vspans(size_t na, const mp_obj_t *a) {
     picogame_canvas_obj_t *cv = cv_self(a[0]);
     // five equal-shape uint16 arrays in a row: fetch + shortest-length fold in one loop
@@ -229,14 +280,23 @@ static mp_obj_t canvas_vspans(size_t na, const mp_obj_t *a) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(canvas_vspans_obj, 7, 9, canvas_vspans);
 
-//|     def road(self, ri0: int, tab: ReadableBuffer, rl: ReadableBuffer, rr: ReadableBuffer,
-//|              d05_q8: int, d07_q8: int, colors: ReadableBuffer) -> None:
+//|     def road(
+//|         self,
+//|         ri0: int,
+//|         tab: ReadableBuffer,
+//|         rl: ReadableBuffer,
+//|         rr: ReadableBuffer,
+//|         d05_q8: int,
+//|         d07_q8: int,
+//|         colors: ReadableBuffer,
+//|     ) -> None:
 //|         """Draw one racing-road strip (OutRun-style) from precomputed tables - the whole
 //|         per-scanline loop in one call. ri0 = road-table row of this surface's row 0 (may be
 //|         negative = sky rows). tab = int16 rows of {edge_w, dash_hw, wb05_q8, wb07_q8, flags};
 //|         rl/rr = int16 per-row edges (see picogame.road_edges); d05/d07 = Q8 scroll phases;
 //|         colors = 6x uint16 {sky, road_a, road_b, rumble_a, rumble_b, dash}."""
 //|         ...
+//|
 static mp_obj_t canvas_road(size_t n, const mp_obj_t *a) {
     mp_buffer_info_t tabi, rli, rri, coli;
     mp_get_buffer_raise(a[2], &tabi, MP_BUFFER_READ);
@@ -259,6 +319,7 @@ static mp_obj_t canvas_road(size_t n, const mp_obj_t *a) {
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(canvas_road_obj, 8, 8, canvas_road);
 
 //|     def rect(self, x: int, y: int, w: int, h: int, color: int) -> None: ...
+//|
 static mp_obj_t canvas_rect(size_t n, const mp_obj_t *a) {
     int v[5];
     picogame_canvas_rect(cv_args(a, n, v), v[0], v[1], v[2], v[3], v[4]);
@@ -266,7 +327,9 @@ static mp_obj_t canvas_rect(size_t n, const mp_obj_t *a) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(canvas_rect_obj, 6, 6, canvas_rect);
 
+//|
 //|     def line(self, x0: int, y0: int, x1: int, y1: int, color: int) -> None: ...
+//|
 static mp_obj_t canvas_line(size_t n, const mp_obj_t *a) {
     int v[5];
     picogame_canvas_line(cv_args(a, n, v), v[0], v[1], v[2], v[3], v[4]);
@@ -274,7 +337,9 @@ static mp_obj_t canvas_line(size_t n, const mp_obj_t *a) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(canvas_line_obj, 6, 6, canvas_line);
 
+//|
 //|     def fill_circle(self, cx: int, cy: int, r: int, color: int) -> None: ...
+//|
 static mp_obj_t canvas_fill_circle(size_t n, const mp_obj_t *a) {
     int v[4];
     picogame_canvas_fill_circle(cv_args(a, n, v), v[0], v[1], v[2], v[3]);
@@ -282,7 +347,9 @@ static mp_obj_t canvas_fill_circle(size_t n, const mp_obj_t *a) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(canvas_fill_circle_obj, 5, 5, canvas_fill_circle);
 
+//|
 //|     def circle(self, cx: int, cy: int, r: int, color: int) -> None: ...
+//|
 static mp_obj_t canvas_circle(size_t n, const mp_obj_t *a) {
     int v[4];
     picogame_canvas_circle(cv_args(a, n, v), v[0], v[1], v[2], v[3]);
@@ -290,7 +357,9 @@ static mp_obj_t canvas_circle(size_t n, const mp_obj_t *a) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(canvas_circle_obj, 5, 5, canvas_circle);
 
+//|
 //|     def ring(self, cx: int, cy: int, r: int, thickness: int, color: int) -> None: ...
+//|
 static mp_obj_t canvas_ring(size_t n, const mp_obj_t *a) {
     int v[5];
     picogame_canvas_ring(cv_args(a, n, v), v[0], v[1], v[2], v[3], v[4]);
@@ -298,7 +367,11 @@ static mp_obj_t canvas_ring(size_t n, const mp_obj_t *a) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(canvas_ring_obj, 6, 6, canvas_ring);
 
-//|     def triangle(self, x0: int, y0: int, x1: int, y1: int, x2: int, y2: int, color: int) -> None: ...
+//|
+//|     def triangle(
+//|         self, x0: int, y0: int, x1: int, y1: int, x2: int, y2: int, color: int
+//|     ) -> None: ...
+//|
 static mp_obj_t canvas_triangle(size_t n, const mp_obj_t *a) {
     int v[7];
     picogame_canvas_triangle(cv_args(a, n, v), v[0], v[1], v[2], v[3], v[4], v[5], v[6]);
@@ -306,7 +379,11 @@ static mp_obj_t canvas_triangle(size_t n, const mp_obj_t *a) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(canvas_triangle_obj, 8, 8, canvas_triangle);
 
-//|     def fill_triangle(self, x0: int, y0: int, x1: int, y1: int, x2: int, y2: int, color: int) -> None: ...
+//|
+//|     def fill_triangle(
+//|         self, x0: int, y0: int, x1: int, y1: int, x2: int, y2: int, color: int
+//|     ) -> None: ...
+//|
 static mp_obj_t canvas_fill_triangle(size_t n, const mp_obj_t *a) {
     int v[7];
     picogame_canvas_fill_triangle(cv_args(a, n, v), v[0], v[1], v[2], v[3], v[4], v[5], v[6]);
@@ -314,7 +391,9 @@ static mp_obj_t canvas_fill_triangle(size_t n, const mp_obj_t *a) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(canvas_fill_triangle_obj, 8, 8, canvas_fill_triangle);
 
+//|
 //|     def ellipse(self, cx: int, cy: int, rx: int, ry: int, color: int) -> None: ...
+//|
 static mp_obj_t canvas_ellipse(size_t n, const mp_obj_t *a) {
     int v[5];
     picogame_canvas_ellipse(cv_args(a, n, v), v[0], v[1], v[2], v[3], v[4]);
@@ -322,7 +401,9 @@ static mp_obj_t canvas_ellipse(size_t n, const mp_obj_t *a) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(canvas_ellipse_obj, 6, 6, canvas_ellipse);
 
+//|
 //|     def fill_ellipse(self, cx: int, cy: int, rx: int, ry: int, color: int) -> None: ...
+//|
 static mp_obj_t canvas_fill_ellipse(size_t n, const mp_obj_t *a) {
     int v[5];
     picogame_canvas_fill_ellipse(cv_args(a, n, v), v[0], v[1], v[2], v[3], v[4]);
@@ -330,7 +411,9 @@ static mp_obj_t canvas_fill_ellipse(size_t n, const mp_obj_t *a) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(canvas_fill_ellipse_obj, 6, 6, canvas_fill_ellipse);
 
+//|
 //|     def fill_round_rect(self, x: int, y: int, w: int, h: int, r: int, color: int) -> None: ...
+//|
 static mp_obj_t canvas_fill_round_rect(size_t n, const mp_obj_t *a) {
     int v[6];
     picogame_canvas_fill_round_rect(cv_args(a, n, v), v[0], v[1], v[2], v[3], v[4], v[5]);
@@ -338,7 +421,9 @@ static mp_obj_t canvas_fill_round_rect(size_t n, const mp_obj_t *a) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(canvas_fill_round_rect_obj, 7, 7, canvas_fill_round_rect);
 
+//|
 //|     def frame3d(self, x: int, y: int, w: int, h: int, light: int, dark: int) -> None: ...
+//|
 static mp_obj_t canvas_frame3d(size_t n, const mp_obj_t *a) {
     int v[6];
     picogame_canvas_frame3d(cv_args(a, n, v), v[0], v[1], v[2], v[3], v[4], v[5]);
@@ -346,12 +431,16 @@ static mp_obj_t canvas_frame3d(size_t n, const mp_obj_t *a) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(canvas_frame3d_obj, 7, 7, canvas_frame3d);
 
-//|     def text(self, x: int, y: int, s: str, fg: int, font: fontio.BuiltinFont, bg: int | None = None) -> None:
+//|
+//|     def text(
+//|         self, x: int, y: int, s: str, fg: int, font: fontio.BuiltinFont, bg: int | None = None
+//|     ) -> None:
 //|         """Composite ``s`` into the surface in C, rasterizing each glyph from ``font`` on the fly -
 //|         no Python glyph cache, no per-call Bitmap/Sprite (zero retained text RAM, no fragmentation).
 //|         If ``bg`` is given the glyph background is filled too; otherwise it is transparent. Inside a
 //|         StripDraw callback the ``view`` is a Canvas pointing at the live strip, so ``view.text(...)``
 //|         draws immediate-mode HUD/screen text straight into the frame."""
+//|
 static mp_obj_t canvas_text(size_t n, const mp_obj_t *a) {
     const char *s = mp_obj_str_get_str(a[3]);
     mp_int_t fg = mp_obj_get_int(a[4]);
@@ -365,6 +454,7 @@ static mp_obj_t canvas_text(size_t n, const mp_obj_t *a) {
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(canvas_text_obj, 6, 7, canvas_text);
 
 //|     def move(self, x: int, y: int) -> None: ...
+//|
 static mp_obj_t canvas_move(mp_obj_t self_in, mp_obj_t x_in, mp_obj_t y_in) {
     picogame_canvas_obj_t *self = cv_self(self_in);
     int nx = mp_obj_get_int(x_in), ny = mp_obj_get_int(y_in);
@@ -380,12 +470,15 @@ static mp_obj_t canvas_move(mp_obj_t self_in, mp_obj_t x_in, mp_obj_t y_in) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_3(canvas_move_obj, canvas_move);
 
+//|
 //|     x: int
 //|     y: int
 //|     """Current pixel position of the canvas top-left (read-only; set with move())."""
 //|     width: int
 //|     height: int
 //|     """Surface size in pixels (read-only)."""
+//|
+//|
 static mp_obj_t canvas_get_x(mp_obj_t self_in) {
     return MP_OBJ_NEW_SMALL_INT(cv_self(self_in)->x);
 }

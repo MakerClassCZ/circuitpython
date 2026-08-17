@@ -1,5 +1,7 @@
 // This file is part of the CircuitPython project: https://circuitpython.org
 //
+// SPDX-FileCopyrightText: Copyright (c) 2026 Vladimir Smitka
+//
 // SPDX-License-Identifier: MIT
 
 #include "py/runtime.h"
@@ -17,6 +19,7 @@
 //|         """A map ``cols`` tiles wide by ``rows`` tiles tall (each cell indexes a
 //|         frame of ``tileset``)."""
 //|         ...
+//|
 static mp_obj_t picogame_tilemap_make_new(const mp_obj_type_t *type, size_t n_args,
     size_t n_kw, const mp_obj_t *all_args) {
     enum { ARG_tileset, ARG_cols, ARG_rows };
@@ -54,14 +57,23 @@ static mp_obj_t picogame_tilemap_make_new(const mp_obj_type_t *type, size_t n_ar
     return MP_OBJ_FROM_PTR(self);
 }
 
-//|     def tile(self, tx: int, ty: int, value: Optional[int] = None, *,
-//|              flip_x: bool = False, flip_y: bool = False, transpose: bool = False) -> Optional[int]:
-//|         """Get the tile at (tx, ty) -> int; with `value`, set it (and mark dirty) -> None.
-//|         The optional keyword `flip_x`/`flip_y`/`transpose` flags orient the tile - together
+//|     def tile(
+//|         self,
+//|         tx: int,
+//|         ty: int,
+//|         value: Optional[int] = None,
+//|         *,
+//|         flip_x: bool = False,
+//|         flip_y: bool = False,
+//|         transpose: bool = False,
+//|     ) -> Optional[int]:
+//|         """Get the tile at (tx, ty) -> int; with ``value``, set it (and mark dirty) -> None.
+//|         The optional keyword ``flip_x``/``flip_y``/``transpose`` flags orient the tile - together
 //|         they give all 8 orientations (4 rotations x mirror) for free at draw time; use them
 //|         with a deduplicated tileset (png2picogame --dedup REMAP). Out-of-range reads as 0,
 //|         ignores writes."""
 //|         ...
+//|
 static mp_obj_t picogame_tilemap_tile(size_t n_args, const mp_obj_t *pos_args, mp_map_t *kw_args) {
     enum { ARG_tx, ARG_ty, ARG_value, ARG_flip_x, ARG_flip_y, ARG_transpose };
     static const mp_arg_t allowed_args[] = {
@@ -126,6 +138,7 @@ static MP_DEFINE_CONST_FUN_OBJ_KW(picogame_tilemap_tile_obj, 3, picogame_tilemap
 //|     def move(self, x: int, y: int) -> None:
 //|         """Move the whole map to pixel (x, y)."""
 //|         ...
+//|
 static mp_obj_t picogame_tilemap_move(mp_obj_t self_in, mp_obj_t x_in, mp_obj_t y_in) {
     picogame_tilemap_obj_t *self = MP_OBJ_TO_PTR(self_in);
     int nx = mp_obj_get_int(x_in), ny = mp_obj_get_int(y_in);
@@ -145,8 +158,9 @@ static mp_obj_t picogame_tilemap_move(mp_obj_t self_in, mp_obj_t x_in, mp_obj_t 
 static MP_DEFINE_CONST_FUN_OBJ_3(picogame_tilemap_move_obj, picogame_tilemap_move);
 
 //|     def fill(self, value: int) -> None:
-//|         """Set every tile to `value`."""
+//|         """Set every tile to ``value``."""
 //|         ...
+//|
 static mp_obj_t picogame_tilemap_fill(mp_obj_t self_in, mp_obj_t value_in) {
     picogame_tilemap_obj_t *self = MP_OBJ_TO_PTR(self_in);
     uint8_t v = mp_obj_get_int(value_in) & 0xff;
@@ -170,6 +184,8 @@ static MP_DEFINE_CONST_FUN_OBJ_2(picogame_tilemap_fill_obj, picogame_tilemap_fil
 //|     cols: int
 //|     rows: int
 //|     """Map size in tiles (read-only)."""
+//|
+//|
 static mp_obj_t tilemap_get_x(mp_obj_t self_in) {
     return MP_OBJ_NEW_SMALL_INT(((picogame_tilemap_obj_t *)MP_OBJ_TO_PTR(self_in))->x);
 }

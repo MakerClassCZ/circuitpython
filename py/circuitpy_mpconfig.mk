@@ -602,8 +602,11 @@ CFLAGS += -DCIRCUITPY_PICOGAME_RGB444=$(CIRCUITPY_PICOGAME_RGB444)
 # range/precision limits, no grazing glitches) and faster than the soft-float-equivalent fixed path.
 # On RP2040 (M0+, no FPU) it stays integer 16.16. Only ONE path is compiled per board (no flash cost
 # for the other). Python reads `picogame.FPU` to pack camera/point buffers in the matching format.
-CIRCUITPY_PICOGAME_FPU ?= 0
+# Unset by default: shared-module/picogame/__init__.h derives it from the architecture
+# (hardware FPU -> float32 math path). A board sets 0/1 only to override that.
+ifneq ($(CIRCUITPY_PICOGAME_FPU),)
 CFLAGS += -DCIRCUITPY_PICOGAME_FPU=$(CIRCUITPY_PICOGAME_FPU)
+endif
 
 # ROMFS-XIP asset region size (KB), carved between the NVM sector and the FAT drive: game assets
 # stay FILES yet blit straight from XIP flash at 0 heap (review/romfs-xip-implementation-plan.md).

@@ -1,5 +1,7 @@
 // This file is part of the CircuitPython project: https://circuitpython.org
 //
+// SPDX-FileCopyrightText: Copyright (c) 2026 Vladimir Smitka
+//
 // SPDX-License-Identifier: MIT
 
 #pragma once
@@ -11,6 +13,19 @@
 #include "shared-bindings/busdisplay/BusDisplay.h"
 #include "shared-module/picogame/Bitmap.h"
 #include "shared-module/picogame/Sprite.h"
+
+// Hardware-FPU boards run the pseudo-3D/math primitives (picogame.project) on plain float32 -
+// faster than the soft-float-equivalent fixed path and free of 16.16 range limits; no-FPU
+// targets (Cortex-M0+) use integer 16.16. Only ONE path is compiled per board. The default
+// follows the architecture; a board can override with CIRCUITPY_PICOGAME_FPU=0/1 in its
+// mpconfigboard.mk. Python reads `picogame.FPU` to pack camera/point buffers to match.
+#ifndef CIRCUITPY_PICOGAME_FPU
+#if (defined(__ARM_FP) && (__ARM_FP != 0)) || (defined(__riscv_flen) && (__riscv_flen > 0))
+#define CIRCUITPY_PICOGAME_FPU (1)
+#else
+#define CIRCUITPY_PICOGAME_FPU (0)
+#endif
+#endif
 
 // Sample one texel as wire RGB565; false = transparent (skip). Shared by the sprite/canvas
 // blit paths so they inline one copy (see the blit contract: PAL8 indices must be < palette len).

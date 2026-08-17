@@ -1,5 +1,7 @@
 // This file is part of the CircuitPython project: https://circuitpython.org
 //
+// SPDX-FileCopyrightText: Copyright (c) 2026 Vladimir Smitka
+//
 // SPDX-License-Identifier: MIT
 
 #include "py/runtime.h"
@@ -18,10 +20,12 @@ static void reset_dirty(picogame_particles_obj_t *self) {
 
 //| class Particles:
 //|     """A pooled particle layer (small moving dots), drawn as one Scene layer.
-//|     Add it to a Scene, `emit()` bursts, and call `tick()` each frame."""
+//|     Add it to a Scene, ``emit()`` bursts, and call ``tick()`` each frame."""
 //|
-//|     def __init__(self, capacity: int, *, size: int = 1, gravity: float = 0.0,
-//|                  fade: bool = False) -> None: ...
+//|     def __init__(
+//|         self, capacity: int, *, size: int = 1, gravity: float = 0.0, fade: bool = False
+//|     ) -> None: ...
+//|
 static mp_obj_t picogame_particles_make_new(const mp_obj_type_t *type, size_t n_args,
     size_t n_kw, const mp_obj_t *all_args) {
     enum { ARG_capacity, ARG_size, ARG_gravity, ARG_fade };
@@ -63,11 +67,14 @@ static mp_obj_t picogame_particles_make_new(const mp_obj_type_t *type, size_t n_
     return MP_OBJ_FROM_PTR(self);
 }
 
-//|     def emit(self, x: int, y: int, count: int, speed: int = 1, life: int = 30,
-//|              color: int = 0xFFFF) -> None:
-//|         """Spawn `count` particles at (x, y) with random velocity up to `speed`
-//|         px/tick, living `life` ticks, in wire-order `color`."""
+//|
+//|     def emit(
+//|         self, x: int, y: int, count: int, speed: int = 1, life: int = 30, color: int = 0xFFFF
+//|     ) -> None:
+//|         """Spawn ``count`` particles at (x, y) with random velocity up to ``speed``
+//|         px/tick, living ``life`` ticks, in wire-order ``color``."""
 //|         ...
+//|
 static mp_obj_t picogame_particles_emit_fun(size_t n_args, const mp_obj_t *args) {
     picogame_particles_obj_t *self = MP_OBJ_TO_PTR(args[0]);
     int x = mp_obj_get_int(args[1]);
@@ -86,6 +93,7 @@ static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(picogame_particles_emit_obj, 4, 7, pi
 //|     def tick(self) -> None:
 //|         """Advance all particles one step (move, gravity, ageing)."""
 //|         ...
+//|
 static mp_obj_t picogame_particles_tick(mp_obj_t self_in) {
     picogame_particles_update(MP_OBJ_TO_PTR(self_in));
     return mp_const_none;
@@ -95,6 +103,8 @@ static MP_DEFINE_CONST_FUN_OBJ_1(picogame_particles_tick_obj, picogame_particles
 //|     def clear(self) -> None:
 //|         """Remove all particles."""
 //|         ...
+//|
+//|
 static mp_obj_t picogame_particles_clear_method(mp_obj_t self_in) {
     picogame_particles_clear(MP_OBJ_TO_PTR(self_in));
     return mp_const_none;
