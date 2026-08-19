@@ -5,8 +5,6 @@
 // SPDX-License-Identifier: MIT
 //
 // picogame: 2D game engine bindings for the PicoPad and similar boards.
-// Type definitions are consolidated here so the module has a single
-// shared-bindings/shared-module .c pair (CircuitPython build convention).
 
 #include "py/runtime.h"
 #include "shared-module/picogame/pg_compat.h"
@@ -99,7 +97,7 @@ static busdisplay_busdisplay_obj_t *pg_get_display(mp_obj_t obj) {
 //| microcontroller actually has, and the game decides when a frame happens
 //| (``scene.refresh()``).
 //|
-//| The seam is the display object. A ``picogame.Scene`` takes the same
+//| displayio and picogame share the Display object. A ``picogame.Scene`` takes the same
 //| :py:class:`~busdisplay.BusDisplay` displayio uses - it just talks to it
 //| directly instead of through the displayio refresh loop, so set
 //| ``display.auto_refresh = False`` (``picogame_game.setup()`` does this) and let
