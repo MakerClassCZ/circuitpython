@@ -157,6 +157,7 @@ void port_i2s_deinit(i2s_t *self) {
 }
 
 void port_i2s_play(i2s_t *self, mp_obj_t sample, bool loop) {
+    audiosample_check(sample);
     // Pause to disable the I2S channel so we can adjust the clock.
     port_i2s_pause(self);
     self->sample = sample;

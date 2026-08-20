@@ -45,7 +45,11 @@ mp_obj_t common_hal_audiobusio_i2sout_construct_from_device(audiobusio_i2sout_ob
 // Standard audiobusio construct - not used in Zephyr port (devices come from device tree)
 void common_hal_audiobusio_i2sout_construct(audiobusio_i2sout_obj_t *self,
     const mcu_pin_obj_t *bit_clock, const mcu_pin_obj_t *word_select,
-    const mcu_pin_obj_t *data, const mcu_pin_obj_t *main_clock, bool left_justified) {
+    const mcu_pin_obj_t *data, const mcu_pin_obj_t *main_clock, bool left_justified,
+    bool external_clock) {
+    if (external_clock) {
+        mp_raise_NotImplementedError_varg(MP_ERROR_TEXT("%q"), MP_QSTR_external_clock);
+    }
     mp_raise_NotImplementedError_varg(MP_ERROR_TEXT("Use device tree to define %q devices"), MP_QSTR_I2S);
 }
 
@@ -148,6 +152,8 @@ void common_hal_audiobusio_i2sout_play(audiobusio_i2sout_obj_t *self,
     if (self->playing) {
         common_hal_audiobusio_i2sout_stop(self);
     }
+
+    audiosample_check(sample);
 
     // Get sample information
     uint8_t bits_per_sample = audiosample_get_bits_per_sample(sample);

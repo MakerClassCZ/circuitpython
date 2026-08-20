@@ -148,6 +148,7 @@ ifeq ($(CIRCUITPY_TINYUSB),1)
       shared-bindings/usb_hid/Device.c \
       shared-module/usb_hid/__init__.c \
       shared-module/usb_hid/Device.c \
+      shared-module/usb_hid/report_descriptors.c \
 
   endif
 

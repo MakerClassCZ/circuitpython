@@ -884,7 +884,6 @@ static void _reply_with_devices_json(socketpool_socket_obj_t *socket, _request *
             "\"instance_name\": \"%s\", "
             "\"port\": %d, "
             "\"ip\": \"%d.%d.%d.%d\"}", hostname, instance_name, port, octets[0], octets[1], octets[2], octets[3]);
-        common_hal_mdns_remoteservice_deinit(&found_devices[i]);
     }
     #endif
     _send_chunk(socket, "]}");

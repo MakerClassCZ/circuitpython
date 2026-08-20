@@ -216,6 +216,8 @@ void common_hal_mcp4822_mcp4822_play(mcp4822_mcp4822_obj_t *self,
         common_hal_mcp4822_mcp4822_stop(self);
     }
 
+    audiosample_check(sample);
+
     uint8_t bits_per_sample = audiosample_get_bits_per_sample(sample);
     if (bits_per_sample < 16) {
         bits_per_sample = 16;

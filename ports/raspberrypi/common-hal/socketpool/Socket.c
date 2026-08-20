@@ -1226,6 +1226,20 @@ int common_hal_socketpool_socket_setsockopt(socketpool_socket_obj_t *self, int l
     bool enable = optlen == sizeof(&zero) && memcmp(value, &zero, optlen);
 
     switch (level) {
+        case SOCKETPOOL_IPPROTO_IP:
+            switch (optname) {
+                case SOCKETPOOL_IP_MULTICAST_TTL:
+                    if (self->type != SOCKETPOOL_SOCK_DGRAM) {
+                        return -MP_EOPNOTSUPP;
+                    }
+                    if (self->pcb.udp == NULL || optlen < sizeof(uint8_t)) {
+                        return -MP_EINVAL;
+                    }
+                    udp_set_multicast_ttl(self->pcb.udp, *(const uint8_t *)value);
+                    return 0;
+            }
+            break;
+
         case SOCKETPOOL_IPPROTO_TCP:
             switch (optname) {
                 case SOCKETPOOL_TCP_NODELAY:

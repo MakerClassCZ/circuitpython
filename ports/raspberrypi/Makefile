@@ -84,6 +84,33 @@ SRC_CYW43 :=
 SRC_LWIP :=
 endif
 
+ifeq ($(CIRCUITPY_WIZNET), 1)
+INC_WIZNET := \
+	-isystem common-hal/wiznet \
+
+SRC_WIZNET := \
+	common-hal/wiznet/wizchip_pio_spi.c \
+
+WIZNET_PIOASM = $(BUILD)/pioasm/pioasm/pioasm
+.PHONY: pioasmBuild
+pioasmBuild: $(WIZNET_PIOASM)
+
+$(WIZNET_PIOASM):
+	$(Q)cmake -S pioasm -B $(BUILD)/pioasm
+	$(MAKE) -C $(BUILD)/pioasm pioasmBuild
+
+$(BUILD)/wizchip_pio_spi.pio.h: common-hal/wiznet/wizchip_pio_spi.pio $(WIZNET_PIOASM)
+	$(Q)$(WIZNET_PIOASM) -o c-sdk $< $@
+$(BUILD)/common-hal/wiznet/wizchip_pio_spi.o: $(BUILD)/wizchip_pio_spi.pio.h
+
+$(BUILD)/genhdr/qstr.i.last: $(BUILD)/wizchip_pio_spi.pio.h
+
+else
+INC_WIZNET :=
+SRC_WIZNET :=
+
+endif
+
 CHIP_VARIANT_LOWER = $(shell echo $(CHIP_VARIANT) | tr '[:upper:]' '[:lower:]')
 
 INC += \
@@ -568,6 +595,10 @@ SRC_C += \
 	bindings/rp2pio/__init__.c \
 	common-hal/rp2pio/StateMachine.c \
 	common-hal/rp2pio/__init__.c \
+	bindings/wiznet/PIO_SPI.c \
+	bindings/wiznet/__init__.c \
+	common-hal/wiznet/PIO_SPI.c \
+	common-hal/wiznet/__init__.c \
 	audio_dma.c \
 	background.c \
 	peripherals/pins.c \
@@ -577,6 +608,7 @@ SRC_C += \
 	mphalport.c \
 	$(SRC_CYW43) \
 	$(SRC_LWIP) \
+	$(SRC_WIZNET) \
 
 
 ifeq ($(CIRCUITPY_USB_HOST), 1)
@@ -634,89 +666,89 @@ $(BUILD)/common-hal/sdioio/sdfat_pio/SdCard/PioSdio/PioSdioCard.o: CXXFLAGS += -
 endif
 
 ifeq ($(CIRCUITPY_SSL),1)
-CFLAGS += -isystem $(TOP)/mbedtls/include
-SRC_MBEDTLS := $(addprefix lib/mbedtls/library/, \
-	aes.c \
-	aesni.c \
-	arc4.c \
-	asn1parse.c \
-	asn1write.c \
-	base64.c \
-	bignum.c \
-	blowfish.c \
-	camellia.c \
-	ccm.c \
-	certs.c \
-	chacha20.c \
-	chachapoly.c \
-	cipher.c \
-	cipher_wrap.c \
-	cmac.c \
-	constant_time.c \
-	ctr_drbg.c \
-	debug.c \
-	des.c \
-	dhm.c \
-	ecdh.c \
-	ecdsa.c \
-	ecjpake.c \
-	ecp.c \
-	ecp_curves.c \
-	entropy.c \
-	entropy_poll.c \
-	gcm.c \
-	havege.c \
-	hmac_drbg.c \
-	md2.c \
-	md4.c \
-	md5.c \
-	md.c \
-	oid.c \
-	padlock.c \
-	pem.c \
-	pk.c \
-	pkcs11.c \
-	pkcs12.c \
-	pkcs5.c \
-	pkparse.c \
-	pk_wrap.c \
-	pkwrite.c \
-	platform.c \
-	platform_util.c \
-	poly1305.c \
-	ripemd160.c \
-	rsa.c \
-	rsa_internal.c \
-	sha1.c \
-	sha256.c \
-	sha512.c \
-	ssl_cache.c \
-	ssl_ciphersuites.c \
-	ssl_cli.c \
-	ssl_cookie.c \
-	ssl_msg.c \
-	ssl_srv.c \
-	ssl_ticket.c \
-	ssl_tls.c \
-	timing.c \
-	x509.c \
-	x509_create.c \
-	x509_crl.c \
-	x509_crt.c \
-	x509_csr.c \
-	x509write_crt.c \
-	x509write_csr.c \
-	xtea.c \
-	)
+# mbedtls 4.x keeps only TLS and X.509 in library/; crypto lives in the tf-psa-crypto
+# submodule, split across core/, drivers/builtin/src/, extras/, platform/ and
+# utilities/.
+#
+# Deliberately excluded:
+#  - mbedtls_config.c, tf_psa_crypto_config.c: pure config-validation translation
+#    units that #include generated *_config_check_*.h headers. Skipping them is what
+#    lets us skip that second code generator.
+#  - net_sockets.c: CircuitPython drives the socket through socketpool callbacks.
+#  - pkcs7.c: unused, and MBEDTLS_PKCS7_C is off.
+#  - psa_its_file.c: filesystem-backed PSA key storage; we have no persistent keys.
+#  - drivers/{everest,p256-m,pqcp}: alternative curve and ML-DSA implementations.
+mbedtls_sources = $(patsubst $(TOP)/%,%,$(filter-out $(2),$(wildcard $(TOP)/$(1)/*.c)))
+
+SRC_MBEDTLS := \
+	$(call mbedtls_sources,lib/mbedtls/library,\
+		$(TOP)/lib/mbedtls/library/mbedtls_config.c \
+		$(TOP)/lib/mbedtls/library/net_sockets.c \
+		$(TOP)/lib/mbedtls/library/pkcs7.c) \
+	$(call mbedtls_sources,lib/mbedtls/tf-psa-crypto/core,\
+		$(TOP)/lib/mbedtls/tf-psa-crypto/core/psa_its_file.c \
+		$(TOP)/lib/mbedtls/tf-psa-crypto/core/tf_psa_crypto_config.c) \
+	$(call mbedtls_sources,lib/mbedtls/tf-psa-crypto/drivers/builtin/src) \
+	$(call mbedtls_sources,lib/mbedtls/tf-psa-crypto/extras) \
+	$(call mbedtls_sources,lib/mbedtls/tf-psa-crypto/platform) \
+	$(call mbedtls_sources,lib/mbedtls/tf-psa-crypto/utilities)
 SRC_C += $(SRC_MBEDTLS) lib/mbedtls_config/mbedtls_port.c lib/mbedtls_config/crt_bundle.c
+# Public headers of mbedtls and of tf-psa-crypto, then the internal ones. mbedtls 4.x
+# still reaches into tf-psa-crypto's internals, so upstream compiles the TLS layer
+# with both; see TF_PSA_CRYPTO_LIBRARY_{PUBLIC,PRIVATE}_INCLUDE in
+# lib/mbedtls/tf-psa-crypto/scripts/crypto-common.make.
 CFLAGS += \
 	  -isystem $(TOP)/lib/mbedtls/include \
+	  -isystem $(TOP)/lib/mbedtls/tf-psa-crypto/include \
+	  -isystem $(TOP)/lib/mbedtls/tf-psa-crypto/drivers/builtin/include \
+	  -isystem $(TOP)/lib/mbedtls/library \
+	  -isystem $(TOP)/lib/mbedtls/tf-psa-crypto/core \
+	  -isystem $(TOP)/lib/mbedtls/tf-psa-crypto/dispatch \
+	  -isystem $(TOP)/lib/mbedtls/tf-psa-crypto/drivers/builtin/src \
+	  -isystem $(TOP)/lib/mbedtls/tf-psa-crypto/extras \
+	  -isystem $(TOP)/lib/mbedtls/tf-psa-crypto/platform \
+	  -isystem $(TOP)/lib/mbedtls/tf-psa-crypto/utilities \
 	  -DMBEDTLS_CONFIG_FILE='"$(TOP)/lib/mbedtls_config/mbedtls_config.h"' \
+	  -DTF_PSA_CRYPTO_CONFIG_FILE='"$(TOP)/lib/mbedtls_config/tf_psa_crypto_config.h"' \
 
 $(BUILD)/x509_crt_bundle.S: $(TOP)/lib/certificates/data/roots-full.pem $(TOP)/tools/gen_crt_bundle.py
 	$(Q)$(PYTHON) $(TOP)/tools/gen_crt_bundle.py -i $< -o $@ --asm
 OBJ_MBEDTLS := $(BUILD)/x509_crt_bundle.o
-$(patsubst %.c,$(BUILD)/%.o,$(SRC_MBEDTLS))): CFLAGS += -Wno-suggest-attribute=format
+
+# mbedtls 4.x dispatches PSA crypto through a wrapper layer that is generated from
+# jinja templates rather than shipped in the repo, so build it.
+# It is the same each time, so we could save it, but this makes updating mbedtls easier.
+#
+# generate_driver_wrappers.py resolves `mbedtls_framework` relative to its own tree,
+# which would mean initializing a third nested submodule (tf-psa-crypto/framework).
+# Point PYTHONPATH at the top-level framework submodule instead; mbedtls pins both to
+# the same commit.
+MBEDTLS_GEN := $(BUILD)/tf-psa-crypto
+MBEDTLS_WRAPPERS_H := $(MBEDTLS_GEN)/psa_crypto_driver_wrappers.h
+MBEDTLS_WRAPPERS_C := $(MBEDTLS_GEN)/psa_crypto_driver_wrappers_no_static.c
+
+# The script writes both files at once. Naming both as targets of one rule would run
+# it twice; see the same workaround in py/py.mk.
+$(MBEDTLS_WRAPPERS_C): $(MBEDTLS_WRAPPERS_H)
+	@true
+
+$(MBEDTLS_WRAPPERS_H): $(TOP)/lib/mbedtls/tf-psa-crypto/scripts/generate_driver_wrappers.py
+	$(STEPECHO) "GEN $@"
+	$(Q)mkdir -p $(MBEDTLS_GEN)
+	$(Q)PYTHONPATH=$(TOP)/lib/mbedtls/framework/scripts $(PYTHON) $< $(MBEDTLS_GEN)
+
+OBJ_MBEDTLS += $(MBEDTLS_WRAPPERS_C:.c=.o)
+CFLAGS += -I$(MBEDTLS_GEN)
+
+# psa_crypto.c and friends #include the generated header, so it has to exist before
+# any of them compile.
+$(patsubst %.c,$(BUILD)/%.o,$(SRC_MBEDTLS)) $(OBJ_MBEDTLS): $(MBEDTLS_WRAPPERS_H)
+# Vendored third-party code, so don't hold it to CircuitPython's warning settings. The
+# unused-but-set variables are real but harmless: they are in key-exchange paths that
+# are compiled out.
+$(patsubst %.c,$(BUILD)/%.o,$(SRC_MBEDTLS)) $(OBJ_MBEDTLS): CFLAGS += \
+	-Wno-suggest-attribute=format \
+	-Wno-unused-but-set-variable
 else
 OBJ_MBEDTLS :=
 endif

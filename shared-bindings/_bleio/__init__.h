@@ -50,6 +50,5 @@ MP_NORETURN void mp_raise_bleio_RoleError(mp_rom_error_text_t msg);
 MP_NORETURN void mp_raise_bleio_SecurityError(mp_rom_error_text_t msg, ...);
 
 bleio_adapter_obj_t *common_hal_bleio_allocate_adapter_or_raise(void);
-void common_hal_bleio_device_discover_remote_services(mp_obj_t device, mp_obj_t service_uuids_whitelist);
 
 void common_hal_bleio_gc_collect(void);

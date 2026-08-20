@@ -183,6 +183,7 @@ COMPAT_TO_DRIVER = {
     "zephyr_bt_hci_spi": "bluetooth/hci",
     "zephyr_bt_hci_uart": "bluetooth/hci",
     "zephyr_bt_hci_userchan": "bluetooth/hci",
+    "zephyr_bt_hci_ll_sw_split": "bluetooth/hci",
     #
     # cache
     "bflb_l1c": "cache",

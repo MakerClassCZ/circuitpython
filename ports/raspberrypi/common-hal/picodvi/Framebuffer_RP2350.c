@@ -29,6 +29,7 @@
 #include "py/gc.h"
 #include "py/runtime.h"
 #include "shared-bindings/time/__init__.h"
+#include "supervisor/background_callback.h"
 #include "supervisor/port.h"
 
 #include "pico/stdlib.h"
@@ -160,9 +161,10 @@ static uint32_t vactive_line720[VACTIVE_LEN] = {
 
 picodvi_framebuffer_obj_t *active_picodvi = NULL;
 
-// Frame counter for vblank sync (picogame pg.vblank()): the pixel-channel completion IRQ
-// fires once per FRAME (the command list wraps here), i.e. at the vertical blanking moment.
-volatile uint32_t picodvi_framebuffer_frame_count;
+// Incremented once per completed frame by the DMA frame-boundary IRQ, so refresh() can block
+// until the next frame starts (vblank sync). A full-framebuffer repaint that begins right after a
+// frame boundary then races ahead of scanout, avoiding tearing without a second framebuffer.
+static volatile uint32_t framebuffer_frame_count = 0;
 
 static void __not_in_flash_func(dma_irq_handler)(void) {
     if (active_picodvi == NULL) {
@@ -170,12 +172,12 @@ static void __not_in_flash_func(dma_irq_handler)(void) {
     }
     uint ch_num = active_picodvi->dma_pixel_channel;
     dma_hw->intr = 1u << ch_num;
-    picodvi_framebuffer_frame_count++;
 
     // Set the read_addr back to the start and trigger the first transfer (which
     // will trigger the pixel channel).
     dma_channel_hw_t *ch = &dma_hw->ch[active_picodvi->dma_command_channel];
     ch->al3_read_addr_trig = (uintptr_t)active_picodvi->dma_commands;
+    framebuffer_frame_count++;    // frame boundary: scanout has wrapped back to the top
 }
 
 bool common_hal_picodvi_framebuffer_preflight(
@@ -628,6 +630,23 @@ bool common_hal_picodvi_framebuffer_deinited(picodvi_framebuffer_obj_t *self) {
 }
 
 void common_hal_picodvi_framebuffer_refresh(picodvi_framebuffer_obj_t *self) {
+}
+
+void common_hal_picodvi_framebuffer_wait_for_vblank(picodvi_framebuffer_obj_t *self) {
+    // Block until the next frame boundary (vblank). A full-framebuffer repaint issued right after
+    // this returns starts at the top of scanout and stays ahead of the beam, so it does not tear
+    // mid-screen. Bounded by a timeout so a stopped or absent DVI signal can never hang the caller.
+    if (self != active_picodvi) {
+        return;
+    }
+    uint32_t start = framebuffer_frame_count;
+    uint64_t timeout = common_hal_time_monotonic_ms() + 30;    // ~2 frames @ 60 Hz
+    while (framebuffer_frame_count == start) {
+        RUN_BACKGROUND_TASKS;      // don't starve USB host / other tasks during the ~<16 ms wait
+        if (common_hal_time_monotonic_ms() >= timeout) {
+            break;
+        }
+    }
 }
 
 int common_hal_picodvi_framebuffer_get_width(picodvi_framebuffer_obj_t *self) {

@@ -23,16 +23,19 @@
 &flash0 {
 	partitions {
 		code_partition: partition@26000 {
+			compatible = "zephyr,mapped-partition";
 			label = "Application";
 			reg = <0x00026000 0x000c4000>;
 		};
 
 		storage_partition: partition@ea000 {
+			compatible = "zephyr,mapped-partition";
 			label = "storage";
 			reg = <0x000ea000 0x00008000>;
 		};
 
 		nvm_partition: partition@f2000 {
+			compatible = "zephyr,mapped-partition";
 			label = "nvm";
 			reg = <0x000f2000 0x00002000>;
 		};

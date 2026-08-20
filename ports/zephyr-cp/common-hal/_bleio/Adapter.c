@@ -14,6 +14,7 @@
 #include <zephyr/bluetooth/conn.h>
 #include <zephyr/bluetooth/hci.h>
 #include <zephyr/bluetooth/hci_vs.h>
+#include <zephyr/settings/settings.h>
 
 #include "py/gc.h"
 #include "py/runtime.h"
@@ -122,6 +123,8 @@ static void bleio_connection_clear(bleio_connection_internal_t *self) {
     }
 
     self->connection_obj = mp_const_none;
+    self->pair_status = PAIR_NOT_PAIRED;
+    self->sec_err = 0;
 }
 
 static void bleio_connection_release(bleio_connection_internal_t *connection, uint8_t reason) {
@@ -159,13 +162,31 @@ static void bleio_connected_cb(struct bt_conn *conn, uint8_t err) {
 }
 
 static void bleio_disconnected_cb(struct bt_conn *conn, uint8_t reason) {
-    printk("disconnected %p\n", conn);
     bleio_connection_release(bleio_connection_find_by_conn(conn), reason);
+}
+
+static void bleio_security_changed_cb(struct bt_conn *conn, bt_security_t level,
+    enum bt_security_err err) {
+    bleio_connection_internal_t *connection = bleio_connection_find_by_conn(conn);
+    if (connection == NULL) {
+        return;
+    }
+
+    if (err == BT_SECURITY_ERR_SUCCESS && level > BT_SECURITY_L1) {
+        // Security was established (encryption enabled).
+        // This happens both on first-time pairing and when reconnecting
+        // with stored bond keys.
+        connection->pair_status = PAIR_PAIRED;
+    } else if (err != BT_SECURITY_ERR_SUCCESS) {
+        connection->pair_status = PAIR_NOT_PAIRED;
+        connection->sec_err = (uint8_t)err;
+    }
 }
 
 BT_CONN_CB_DEFINE(bleio_connection_callbacks) = {
     .connected = bleio_connected_cb,
     .disconnected = bleio_disconnected_cb,
+    .security_changed = bleio_security_changed_cb,
 };
 
 static void scan_recv_cb(const struct bt_le_scan_recv_info *info, struct net_buf_simple *buf) {
@@ -218,7 +239,6 @@ static size_t bleio_parse_adv_data(const uint8_t *raw, size_t raw_len, struct bt
         uint8_t data_len = field_len - 1;
         if (offset + field_len + 1 > raw_len ||
             count >= out_len ||
-            field_len < 1 ||
             storage_offset + data_len > storage_len) {
             mp_raise_ValueError(MP_ERROR_TEXT("Invalid advertising data"));
         }
@@ -258,9 +278,15 @@ void common_hal_bleio_adapter_set_enabled(bleio_adapter_obj_t *self, bool enable
         }
         if (!bt_is_ready()) {
             int err = bt_enable(NULL);
-            if (err != 0) {
+            if (err != 0 && err != -EALREADY) {
                 raise_zephyr_error(err);
             }
+
+            // bt_init() returns early without setting BT_DEV_READY when
+            // CONFIG_BT_SETTINGS=y and no identity is loaded yet.
+            // Load settings so the BT settings handler fires and calls
+            // bt_finalize_init() which sets BT_DEV_READY.
+            settings_load();
         }
         ble_adapter_enabled = true;
         return;
@@ -622,11 +648,61 @@ mp_obj_t common_hal_bleio_adapter_connect(bleio_adapter_obj_t *self, bleio_addre
     return bleio_connection_new_from_internal(connection);
 }
 
+struct bond_collect_ctx {
+    bt_addr_le_t *addrs;
+    size_t *count;
+    size_t max;
+};
+
+static void bond_iterator_collect(const struct bt_bond_info *info, void *user_data) {
+    struct bond_collect_ctx *ctx = (struct bond_collect_ctx *)user_data;
+    if (*ctx->count < ctx->max) {
+        bt_addr_le_copy(&ctx->addrs[*ctx->count], &info->addr);
+        (*ctx->count)++;
+    }
+}
+
+static void bond_iterator_check(const struct bt_bond_info *info, void *user_data) {
+    (void)info;
+    bool *has_bonds = (bool *)user_data;
+    *has_bonds = true;
+}
+
 void common_hal_bleio_adapter_erase_bonding(bleio_adapter_obj_t *self) {
-    mp_raise_NotImplementedError(NULL);
+    // Unpair all bonded devices for all local identities.
+    for (uint8_t id = 0; id < CONFIG_BT_ID_MAX; id++) {
+        // bt_unpair takes an addr; use bt_foreach_bond to iterate and unpair.
+        // We need to collect addresses first since we can't unpair during iteration.
+        bt_addr_le_t addrs[CONFIG_BT_MAX_PAIRED];
+        size_t addr_count = 0;
+
+        bt_foreach_bond(id, bond_iterator_collect, &(struct bond_collect_ctx) {
+            .addrs = addrs,
+            .count = &addr_count,
+            .max = CONFIG_BT_MAX_PAIRED
+        });
+
+        for (size_t i = 0; i < addr_count; i++) {
+            bt_unpair(id, &addrs[i]);
+        }
+    }
+
+    // Reset pairing state on all connections
+    for (size_t i = 0; i < BLEIO_TOTAL_CONNECTION_COUNT; i++) {
+        bleio_connections[i].pair_status = PAIR_NOT_PAIRED;
+        bleio_connections[i].sec_err = 0;
+    }
 }
 
 bool common_hal_bleio_adapter_is_bonded_to_central(bleio_adapter_obj_t *self) {
+    // Check if any bond exists for identity 0
+    for (uint8_t id = 0; id < CONFIG_BT_ID_MAX; id++) {
+        bool has_bonds = false;
+        bt_foreach_bond(id, bond_iterator_check, &has_bonds);
+        if (has_bonds) {
+            return true;
+        }
+    }
     return false;
 }
 

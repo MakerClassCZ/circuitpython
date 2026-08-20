@@ -1,14 +1,13 @@
 # SPDX-FileCopyrightText: 2025 Scott Shawcroft for Adafruit Industries
 # SPDX-License-Identifier: MIT
 
-"""BLE advertising tests for nrf5340bsim."""
+"""BLE advertising tests for bsim."""
 
 import logging
 import re
 
 import pytest
 
-pytestmark = pytest.mark.circuitpython_board("native_nrf5340bsim")
 
 logger = logging.getLogger(__name__)
 
@@ -128,7 +127,7 @@ def test_bsim_advertise_ctrl_c_reload(bsim_phy, circuitpython, zephyr_sample):
 
 @pytest.mark.zephyr_sample("bluetooth/observer")
 @pytest.mark.circuitpy_drive({"code.py": BSIM_TX_POWER_DEFAULT_CODE})
-def test_bsim_tx_power_default_rssi(bsim_phy, circuitpython, zephyr_sample):
+def test_bsim_tx_power_default_rssi(board, bsim_phy, circuitpython, zephyr_sample):
     """Verify default TX power produces expected RSSI."""
     observer = zephyr_sample
 
@@ -142,13 +141,14 @@ def test_bsim_tx_power_default_rssi(bsim_phy, circuitpython, zephyr_sample):
 
     # Observer: "Device found: <addr> (RSSI <n>), type <t>, AD data len <l>"
     # Advertisement is 12 bytes: flags (3) + name (9).
-    # With 40 dB channel attenuation and 0 dBm TX → RSSI ~ -39
+    # With 40 dB channel attenuation and 0 dBm TX → RSSI ~ -39.
+    expected_rssi = -39
     rssi_pattern = re.compile(r"RSSI (-?\d+)\), type \d+, AD data len 12")
     all_rssi = [int(m.group(1)) for m in rssi_pattern.finditer(obs_output)]
     logger.info("RSSI values: %s", all_rssi)
 
     assert len(all_rssi) > 0, "Observer saw no advertisements"
-    assert all_rssi[0] == -39, f"Expected RSSI -39 (0 dBm TX), got {all_rssi[0]}"
+    assert all_rssi[0] == expected_rssi, f"Expected RSSI {expected_rssi}, got {all_rssi[0]}"
 
 
 @pytest.mark.zephyr_sample("bluetooth/observer")

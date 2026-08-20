@@ -95,11 +95,11 @@ endif # samd21
 ######################################################################
 
 ######################################################################
-# Put samd51-only choices here.
+# Put samx5x-only choices here.
 
-ifeq ($(CHIP_FAMILY),samd51)
+ifneq ($(filter $(CHIP_FAMILY),samd51 same51 same54),)
 
-# No native touchio on SAMD51.
+# No native touchio on SAMx5x.
 CIRCUITPY_TOUCHIO_USE_NATIVE = 0
 
 ifeq ($(CIRCUITPY_FULL_BUILD),0)
@@ -135,32 +135,7 @@ ifeq ($(CHIP_VARIANT),SAMD51G19A)
 CIRCUITPY_AUDIOBUSIO = 0
 endif
 
-endif # samd51
-######################################################################
-
-######################################################################
-# Put same51-only choices here.
-
-ifeq ($(CHIP_FAMILY),same51)
-
-# No native touchio on SAME51.
-CIRCUITPY_TOUCHIO_USE_NATIVE = 0
-
-ifeq ($(CIRCUITPY_FULL_BUILD),0)
-CIRCUITPY_LTO_PARTITION ?= one
-endif
-
-# The ?='s allow overriding in mpconfigboard.mk.
-
-CIRCUITPY_ALARM ?= 1
-CIRCUITPY_PS2IO ?= 1
-CIRCUITPY_SAMD ?= 1
-CIRCUITPY_FLOPPYIO ?= $(CIRCUITPY_FULL_BUILD)
-CIRCUITPY_FRAMEBUFFERIO ?= $(CIRCUITPY_FULL_BUILD)
-CIRCUITPY_RGBMATRIX ?= $(CIRCUITPY_FRAMEBUFFERIO)
-CIRCUITPY_ULAB_OPTIMIZE_SIZE ?= 1
-
-endif # same51
+endif # samx5x
 ######################################################################
 
 CIRCUITPY_BUILD_EXTENSIONS ?= uf2

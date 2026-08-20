@@ -23,6 +23,9 @@
 #include "shared-bindings/picogame/Particles.h"
 #include "shared-bindings/picogame/Canvas.h"
 #include "shared-bindings/picogame/Framebuffer.h"
+#if CIRCUITPY_PICODVI && defined(__RP2350__)
+#include "bindings/picodvi/Framebuffer.h"   // wait_for_vblank lives in the port
+#endif
 #include "shared-bindings/picogame/StripDraw.h"
 #include "shared-bindings/picogame/Triangles.h"
 #include "shared-module/picogame/__init__.h"
@@ -30,25 +33,21 @@
 #include "shared-module/picogame/Sprite.h"
 
 #if CIRCUITPY_PICODVI && defined(__RP2350__)
-//| def vblank() -> None:
+//| def vblank(framebuffer: picodvi.Framebuffer) -> None:
 //|     """Block until the DVI scanout's next vertical blanking (up to ~16.7 ms). Starting a
 //|     full-frame compose right after vblank keeps the publish front consistently behind the
 //|     beam, so each sweep shows one WHOLE frame (old or new) - removes single-buffer tearing
 //|     when the compose fits within two sweeps. Costs the wait: budget it against your cap."""
 //|     ...
-extern volatile uint32_t picodvi_framebuffer_frame_count;
-static mp_obj_t picogame_vblank_fn(void) {
-    uint32_t seen = picodvi_framebuffer_frame_count;
-    uint32_t spins = 0;
-    while (picodvi_framebuffer_frame_count == seen) {
-        RUN_BACKGROUND_TASKS;
-        if (++spins > 40000000u) {              // no scanout running: don't hang forever
-            break;
-        }
-    }
+// Waiting is the port's job: common-hal owns the frame counter and the timeout that keeps a
+// stopped or absent DVI signal from hanging the caller. Pass the picodvi.Framebuffer the display
+// was built on (picogame_game keeps it); anything else is not a scanout we can sync to.
+static mp_obj_t picogame_vblank_fn(mp_obj_t fb_in) {
+    picodvi_framebuffer_obj_t *fb = mp_arg_validate_type(fb_in, &picodvi_framebuffer_type, MP_QSTR_framebuffer);
+    common_hal_picodvi_framebuffer_wait_for_vblank(fb);
     return mp_const_none;
 }
-static MP_DEFINE_CONST_FUN_OBJ_0(picogame_vblank_obj, picogame_vblank_fn);
+static MP_DEFINE_CONST_FUN_OBJ_1(picogame_vblank_obj, picogame_vblank_fn);
 #endif
 // ---------------------------------------------------------------------------
 // Module-level functions

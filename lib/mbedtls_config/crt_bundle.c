@@ -56,10 +56,6 @@ static crt_bundle_t s_crt_bundle;
 static int crt_check_signature(mbedtls_x509_crt *child, const uint8_t *pub_key_buf, size_t pub_key_len);
 
 
-#if MBEDTLS_VERSION_MAJOR < 3
-#define MBEDTLS_PRIVATE(x) x
-#endif
-
 static int crt_check_signature(mbedtls_x509_crt *child, const uint8_t *pub_key_buf, size_t pub_key_len) {
     int ret = 0;
     mbedtls_x509_crt parent;
@@ -74,33 +70,16 @@ static int crt_check_signature(mbedtls_x509_crt *child, const uint8_t *pub_key_b
     }
 
 
-    #if MBEDTLS_VERSION_MAJOR < 4
-    // Fast check to avoid expensive computations when not necessary
-    if (!mbedtls_pk_can_do(&parent.pk, child->MBEDTLS_PRIVATE(sig_pk))) {
-        LOGE(TAG, "Simple compare failed");
-        ret = -1;
-        goto cleanup;
-    }
-    #endif
-
     md_info = mbedtls_md_info_from_type(child->MBEDTLS_PRIVATE(sig_md));
     if ((ret = mbedtls_md(md_info, child->tbs.p, child->tbs.len, hash)) != 0) {
         LOGE(TAG, "Internal mbedTLS error %X", ret);
         goto cleanup;
     }
 
-    #if MBEDTLS_VERSION_MAJOR >= 4
     if ((ret = mbedtls_pk_verify_ext(
         child->MBEDTLS_PRIVATE(sig_pk), &parent.pk,
         child->MBEDTLS_PRIVATE(sig_md), hash, mbedtls_md_get_size(md_info),
         child->MBEDTLS_PRIVATE(sig).p, child->MBEDTLS_PRIVATE(sig).len)) != 0) {
-    #else
-    if ((ret = mbedtls_pk_verify_ext(
-        child->MBEDTLS_PRIVATE(sig_pk), child->MBEDTLS_PRIVATE(sig_opts), &parent.pk,
-        child->MBEDTLS_PRIVATE(sig_md), hash, mbedtls_md_get_size(md_info),
-        child->MBEDTLS_PRIVATE(sig).p, child->MBEDTLS_PRIVATE(sig).len)) != 0) {
-    #endif
-
         LOGE(TAG, "PK verify failed with error %X", ret);
         goto cleanup;
     }

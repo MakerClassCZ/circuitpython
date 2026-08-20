@@ -3,6 +3,10 @@
 #include "shared-bindings/usb_cdc/__init__.h"
 #include "shared-bindings/usb_cdc/Serial.h"
 
+#if CIRCUITPY_USB_HID
+#include "common-hal/usb_hid/__init__.h"
+#endif
+
 #include "supervisor/zephyr-cp.h"
 
 #include "extmod/vfs.h"
@@ -16,6 +20,9 @@
 #include <zephyr/kernel.h>
 #include <zephyr/usb/usbd.h>
 #include <zephyr/usb/class/usbd_msc.h>
+#if DT_HAS_COMPAT_STATUS_OKAY(nordic_nrf_usbd)
+#include <nrfx_power.h>
+#endif
 
 #include "shared-module/storage/__init__.h"
 #include "supervisor/filesystem.h"
@@ -189,21 +196,37 @@ int _zephyr_disk_ioctl(struct disk_info *disk, uint8_t cmd, void *buff) {
     return 0;
 }
 
+// Tracks whether the USB host has selected a configuration, i.e. the device has
+// enumerated. Written from the USBD message callback (USBD thread or system
+// workqueue context) and read from the CircuitPython VM thread, so keep it
+// volatile to avoid the compiler caching stale values.
+static volatile bool usb_configured = false;
+
 static void _msg_cb(struct usbd_context *const ctx, const struct usbd_msg *msg) {
     LOG_INF("USBD message: %s", usbd_msg_type_string(msg->type));
 
     if (usbd_can_detect_vbus(ctx)) {
         if (msg->type == USBD_MSG_VBUS_READY) {
+            usb_configured = false;
             if (usbd_enable(ctx)) {
                 LOG_ERR("Failed to enable device support");
             }
         }
 
         if (msg->type == USBD_MSG_VBUS_REMOVED) {
+            usb_configured = false;
             if (usbd_disable(ctx)) {
                 LOG_ERR("Failed to disable device support");
             }
         }
+    }
+
+    // A non-zero configuration value means the host has enumerated us.
+    // A value of zero (or a bus reset / VBUS removal) unconfigures us.
+    if (msg->type == USBD_MSG_CONFIGURATION) {
+        usb_configured = (msg->status != 0);
+    } else if (msg->type == USBD_MSG_RESET) {
+        usb_configured = false;
     }
 }
 
@@ -293,6 +316,17 @@ void usb_init(void) {
             printk("Registered MSC class for high speed\n");
         }
 
+        #if CIRCUITPY_USB_HID
+        if (usb_hid_enabled()) {
+            printk("Registering High-Speed hid class\n");
+            err = usbd_register_class(&main_usbd, "hid_0", USBD_SPEED_HS, 1);
+            if (err) {
+                printk("Failed to register HID class (HS) %d\n", err);
+                return;
+            }
+        }
+        #endif
+
         usbd_device_set_code_triple(&main_usbd, USBD_SPEED_HS,
             USB_BCC_MISCELLANEOUS, 0x02, 0x01);
     }
@@ -334,6 +368,17 @@ void usb_init(void) {
     }
     /* doc functions register end */
 
+    #if CIRCUITPY_USB_HID
+    if (usb_hid_enabled()) {
+        printk("Registering Full-Speed hid class\n");
+        err = usbd_register_class(&main_usbd, "hid_0", USBD_SPEED_FS, 1);
+        if (err) {
+            printk("Failed to register HID class (FS) %d\n", err);
+            return;
+        }
+    }
+    #endif
+
     usbd_device_set_code_triple(&main_usbd, USBD_SPEED_FS,
         USB_BCC_MISCELLANEOUS, 0x02, 0x01);
     printk("Setting self powered\n");
@@ -346,27 +391,63 @@ void usb_init(void) {
         return;
     }
 
+    #if CIRCUITPY_USB_HID
+    printk("Initializing HID\n");
+    usb_hid_init_devices();
+    #endif
+
     printk("usbd_init\n");
     err = usbd_init(&main_usbd);
     if (err) {
-        LOG_ERR("Failed to initialize device support");
+        LOG_ERR("Failed to initialize device support (%d)", err);
         return;
     }
 
     printk("USB initialized\n");
 
     if (!usbd_can_detect_vbus(&main_usbd)) {
+        /* No VBUS detection — just enable unconditionally. */
         err = usbd_enable(&main_usbd);
         if (err) {
-            LOG_ERR("Failed to enable device support");
+            LOG_ERR("Failed to enable device support (%d)", err);
             return;
         }
-        printk("usbd enabled\n");
+    } else {
+        #if DT_HAS_COMPAT_STATUS_OKAY(nordic_nrf_usbd)
+        /*
+         * On nRF52 USBD, the UDC driver enables VBUS detection interrupts
+         * inside usbd_init(). If USB is already plugged in, the VBUS_READY
+         * event arrives before usbd_init() sets status.initialized = true,
+         * causing a __ASSERT in usbd_thread (with CONFIG_ASSERT=y) that kills
+         * the event-processing thread. Our _msg_cb then never receives
+         * VBUS_READY, and USB never enumerates.
+         *
+         * Work around the race by checking the current VBUS state directly.
+         * udc_nrf_enable() does not require VBUS to be present, so it's safe
+         * to call usbd_enable() if VBUS is already up.
+         */
+        nrfx_power_usb_state_t vbus = nrfx_power_usbstatus_get();
+        if (vbus != NRFX_POWER_USB_STATE_DISCONNECTED) {
+            err = usbd_enable(&main_usbd);
+            if (err) {
+                LOG_ERR("Failed to enable device support (%d)", err);
+                return;
+            }
+        }
+        #else
+        /*
+         * On nRF54 USBHS, VBUS events arrive via NRFS IPC which has a natural
+         * startup delay, so the assert race doesn't occur. Additionally,
+         * udc_enable() blocks until VBUS is ready, so we must NOT call
+         * usbd_enable() here — let _msg_cb handle it on VBUS_READY.
+         */
+        #endif
     }
 }
 
 bool usb_connected(void) {
-    return false;
+    // Mirrors TinyUSB's tud_ready(): configured (mounted) and not suspended.
+    return usb_configured && !usbd_is_suspended(&main_usbd);
 }
 
 void usb_disconnect(void) {

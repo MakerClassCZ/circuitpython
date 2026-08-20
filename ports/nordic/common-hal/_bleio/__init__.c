@@ -70,7 +70,7 @@ void check_sec_status(uint8_t sec_status) {
 
     switch (sec_status) {
         case BLE_GAP_SEC_STATUS_UNSPECIFIED:
-            mp_raise_bleio_SecurityError(MP_ERROR_TEXT("Unspecified issue. Can be that the pairing prompt on the other device was declined or ignored."));
+            mp_raise_bleio_SecurityError(MP_ERROR_TEXT("Unspecified issue. The pairing request on the other device may have been declined or ignored."));
             return;
         default:
             mp_raise_bleio_SecurityError(MP_ERROR_TEXT("Unknown security error: 0x%04x"), sec_status);

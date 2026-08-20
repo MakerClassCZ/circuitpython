@@ -44,4 +44,12 @@
 	status = "okay";
 };
 
+/* Remove slot1 (OTA), expand slot0 to use the space.
+ * CircuitPython doesn't use OTA updates. */
+&slot0_partition {
+	reg = <0x40000 DT_SIZE_K(656)>;
+};
+
+/delete-node/ &slot1_partition;
+
 #include "../app.overlay"

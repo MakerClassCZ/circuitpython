@@ -16,9 +16,6 @@ from .. import SerialSaver, StdSerial
 logger = logging.getLogger(__name__)
 
 ZEPHYR_CP = Path(__file__).resolve().parents[2]
-BSIM_BUILD_DIR = ZEPHYR_CP / "build-native_nrf5340bsim"
-BSIM_SYSBUILD_BINARY = BSIM_BUILD_DIR / "zephyr/zephyr.exe"
-BSIM_BINARY = BSIM_BUILD_DIR / "zephyr-cp/zephyr/zephyr.exe"
 BSIM_ROOT = ZEPHYR_CP / "tools/bsim"
 BSIM_PHY_BINARY = BSIM_ROOT / "bin/bs_2G4_phy_v1"
 
@@ -34,14 +31,14 @@ def native_sim_env() -> dict[str, str]:
     return env
 
 
-@pytest.fixture
-def bsim_binary():
-    """Return path to nrf5340bsim binary, skip if not built."""
-    if BSIM_SYSBUILD_BINARY.exists():
-        return BSIM_SYSBUILD_BINARY
-    if not BSIM_BINARY.exists():
-        pytest.skip(f"nrf5340bsim not built: {BSIM_BINARY}")
-    return BSIM_BINARY
+@pytest.fixture(params=["native_nrf5340bsim", "native_nrf54lm20bsim"])
+def board(request):
+    """Parametrized board fixture for bsim tests.
+
+    Overrides the parent conftest's board fixture to run each test on both
+    bsim boards.
+    """
+    return request.param
 
 
 @pytest.fixture
@@ -178,13 +175,29 @@ def zephyr_sample(request, bsim_phy, native_sim_env, sim_id):
     sample_rel = str(sample).removeprefix("zephyr/samples/")
     source_dir = ZEPHYR_CP / "zephyr/samples" / sample_rel
     if not source_dir.exists():
+        source_dir = ZEPHYR_CP / sample  # port-local sample
+    if not source_dir.exists():
         pytest.skip(f"Zephyr sample not found: {source_dir}")
 
     build_name = f"build-bsim-sample-{sample_rel.replace('/', '_')}-{board}"
     build_dir = ZEPHYR_CP / build_name
     binary = build_dir / "zephyr/zephyr.exe"
 
+    needs_rebuild = False
     if not binary.exists():
+        needs_rebuild = True
+    else:
+        # Rebuild if any source file is newer than the binary.
+        binary_mtime = binary.stat().st_mtime
+        for root, _dirs, files in os.walk(source_dir):
+            for f in files:
+                if Path(root, f).stat().st_mtime > binary_mtime:
+                    needs_rebuild = True
+                    break
+            if needs_rebuild:
+                break
+
+    if needs_rebuild:
         try:
             binary = _build_zephyr_sample(build_dir, source_dir, board)
         except (subprocess.CalledProcessError, RuntimeError) as exc:
@@ -213,6 +226,39 @@ def zephyr_sample(request, bsim_phy, native_sim_env, sim_id):
 
     print("Zephyr sample output:")
     print(sample_proc.serial.all_output)
+
+
+FROZEN_ROOT = (ZEPHYR_CP / "../../frozen").resolve()
+
+
+def get_library_files(name: str) -> dict[str, str]:
+    """Return a dict mapping CIRCUITPY paths to file contents for all
+    .py files in a frozen library, suitable for circuitpy_drive.
+
+    Looks up ``name`` under the ``frozen/`` directory (e.g.
+    ``get_library_files("adafruit_ble")`` walks
+    ``frozen/Adafruit_CircuitPython_BLE/adafruit_ble/``).
+    """
+    files: dict[str, str] = {}
+
+    # Try directory-style library: */<name>/**/*.py
+    py_files = sorted(FROZEN_ROOT.glob(f"*/{name}/**/*.py"))
+    if py_files:
+        repo_dir = py_files[0].relative_to(FROZEN_ROOT).parts[0]
+        lib_parent = FROZEN_ROOT / repo_dir
+        for py_file in py_files:
+            rel = py_file.relative_to(lib_parent)
+            files[str(rel)] = py_file.read_text(encoding="utf-8")
+        return files
+
+    # Try single-file module: */<name>.py
+    py_files = list(FROZEN_ROOT.glob(f"*/{name}.py"))
+    if py_files:
+        py_file = py_files[0]
+        files[name + ".py"] = py_file.read_text(encoding="utf-8")
+        return files
+
+    raise FileNotFoundError(f"Library {name!r} not found under {FROZEN_ROOT}")
 
 
 # pytest markers are defined inside out meaning the bottom one is first in the

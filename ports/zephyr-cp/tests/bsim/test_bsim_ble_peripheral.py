@@ -1,11 +1,10 @@
 # SPDX-FileCopyrightText: 2026 Scott Shawcroft for Adafruit Industries
 # SPDX-License-Identifier: MIT
 
-"""BLE peripheral connection tests for nrf5340bsim."""
+"""BLE peripheral connection tests for bsim."""
 
 import pytest
 
-pytestmark = pytest.mark.circuitpython_board("native_nrf5340bsim")
 
 BSIM_PERIPHERAL_CODE = """\
 import _bleio

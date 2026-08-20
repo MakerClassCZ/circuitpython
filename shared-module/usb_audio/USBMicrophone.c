@@ -11,6 +11,7 @@
 
 #include "shared-bindings/usb_audio/USBMicrophone.h"
 #include "shared-module/usb_audio/__init__.h"
+#include "shared-module/usb_audio/usb_audio_descriptors.h"
 #include "shared-module/audiocore/__init__.h"
 
 // Only one microphone may feed the single USB IN endpoint at a time. This points
@@ -53,7 +54,7 @@ void common_hal_usb_audio_usbmicrophone_play(usb_audio_usbmicrophone_obj_t *self
     if (audiosample_get_channel_count(sample_base) != usb_audio_channel_count) {
         mp_raise_ValueError_varg(MP_ERROR_TEXT("The sample's %q does not match"), MP_QSTR_channel_count);
     }
-    if (audiosample_get_bits_per_sample(sample_base) != usb_audio_bits_per_sample) {
+    if (audiosample_get_bits_per_sample(sample_base) != USB_AUDIO_BITS_PER_SAMPLE) {
         mp_raise_ValueError_varg(MP_ERROR_TEXT("The sample's %q does not match"), MP_QSTR_bits_per_sample);
     }
     if (!sample_base->samples_signed) {
@@ -107,9 +108,9 @@ size_t usb_audio_usbmicrophone_background_fill(uint8_t *out, size_t max_bytes) {
         return 0;
     }
 
-    // The negotiated USB format is 16-bit signed mono PCM. For this step the
+    // The negotiated USB format is 16-bit signed PCM. For this step the
     // bound sample is assumed to already be in that format (e.g. a 16-bit signed
-    // mono audiocore.RawSample), so its bytes are copied straight through.
+    // audiocore.RawSample), so its bytes are copied straight through.
     size_t filled = 0;
     while (filled < max_bytes) {
         if (self->buffer_length == 0) {
@@ -138,11 +139,35 @@ size_t usb_audio_usbmicrophone_background_fill(uint8_t *out, size_t max_bytes) {
             }
         }
 
-        size_t n = MIN(self->buffer_length, max_bytes - filled);
-        memcpy(out + filled, self->buffer, n);
-        self->buffer += n;
-        self->buffer_length -= n;
-        filled += n;
+        // Bytes written to out, and bytes consumed from the sample's chunk. They
+        // differ when a mono sample feeds the always-stereo USB stream.
+        size_t written;
+        size_t consumed;
+        if (MP_LIKELY(usb_audio_channel_count == USB_AUDIO_N_CHANNELS)) {
+            written = consumed = MIN(self->buffer_length, max_bytes - filled);
+            memcpy(out + filled, self->buffer, written);
+        } else {
+            // Mono source: duplicate each sample into both USB channels. Work in
+            // whole stereo frames so a partial frame can never be emitted, and
+            // cap by both what the chunk holds and what still fits in out.
+            size_t frames = MIN(self->buffer_length / USB_AUDIO_N_BYTES_PER_SAMPLE,
+                (max_bytes - filled) / USB_AUDIO_BYTES_PER_FRAME);
+            const int16_t *in = (const int16_t *)(const void *)self->buffer;
+            int16_t *dest = (int16_t *)(void *)(out + filled);
+            for (size_t i = 0; i < frames; i++) {
+                dest[2 * i] = dest[2 * i + 1] = in[i];
+            }
+            written = frames * USB_AUDIO_BYTES_PER_FRAME;
+            consumed = frames * USB_AUDIO_N_BYTES_PER_SAMPLE;
+        }
+        if (written == 0) {
+            // Less than one whole frame of room left in out (or nothing to copy):
+            // stop rather than spin. The caller pads the remainder with silence.
+            break;
+        }
+        self->buffer += consumed;
+        self->buffer_length -= consumed;
+        filled += written;
     }
 
     return filled;

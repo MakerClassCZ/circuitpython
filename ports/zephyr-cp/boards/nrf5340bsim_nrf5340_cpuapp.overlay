@@ -14,13 +14,19 @@
 &flash0 {
 	/delete-node/ partitions;
 	partitions {
-		compatible = "fixed-partitions";
 		#address-cells = <1>;
 		#size-cells = <1>;
 
 		circuitpy_partition: partition@0 {
+			compatible = "zephyr,mapped-partition";
 			label = "circuitpy";
-			reg = <0x00000000 DT_SIZE_K(1024)>;
+			reg = <0x00000000 DT_SIZE_K(1008)>;
+		};
+
+		storage_partition: partition@fc000 {
+			compatible = "zephyr,mapped-partition";
+			label = "storage";
+			reg = <0x000fc000 DT_SIZE_K(16)>;
 		};
 	};
 };

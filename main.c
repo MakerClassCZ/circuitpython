@@ -197,28 +197,7 @@ static void start_mp(safe_mode_t safe_mode) {
 
     #if MICROPY_ENABLE_GC
     size_t heap_size = 0;
-    // CIRCUITPY-FORK (picogame; upstream candidate): CIRCUITPY_HEAP_SRAM_SIZE in
-    // settings.toml places the heap START segment in fast internal RAM (the dma-capable
-    // pool) on boards whose default heap lives in PSRAM. Growth segments still come from
-    // MP_PLAT_ALLOC_HEAP (PSRAM), so early/hot allocations run at SRAM speed and the rest
-    // spills over transparently. Measured (Fruit Jam, RP2350+PSRAM): canvas fills 13-18x
-    // faster, ~10% off a real game's frame. OFF unless the key is set; an oversized
-    // request just fails the SRAM attempt and falls back to stock behavior. Tradeoff to
-    // budget on the device: the internal-RAM pool also serves display/audio DMA buffers.
-    #if CIRCUITPY_SETTINGS_TOML
-    if (safe_mode == SAFE_MODE_NONE) {
-        mp_int_t sram_size;
-        if (settings_get_int("CIRCUITPY_HEAP_SRAM_SIZE", &sram_size) == SETTINGS_OK && sram_size > 0) {
-            _heap = port_malloc((size_t)sram_size, true);
-            if (_heap != NULL) {
-                heap_size = (size_t)sram_size;
-            }
-        }
-    }
-    #endif
-    if (_heap == NULL) {
-        _heap = _allocate_memory(safe_mode, "CIRCUITPY_HEAP_START_SIZE", CIRCUITPY_HEAP_START_SIZE, &heap_size);
-    }
+    _heap = _allocate_memory(safe_mode, "CIRCUITPY_HEAP_START_SIZE", CIRCUITPY_HEAP_START_SIZE, &heap_size);
     gc_init(_heap, _heap + heap_size);
     #endif
     mp_init();

@@ -27,6 +27,7 @@
 #include <string.h>
 
 #include <zephyr/kernel.h>
+#include <zephyr/net/dns_resolve.h>
 #include <zephyr/net/socket.h>
 
 #define SOCKETPOOL_IP_STR_LEN 48
@@ -82,7 +83,12 @@ static void socketpool_resolve_host_or_throw(int family, int type, const char *h
 
     int error = zsock_getaddrinfo(hostname, service_buf, &hints, &result_i);
     if (error != 0 || result_i == NULL) {
-        common_hal_socketpool_socketpool_raise_gaierror_noname();
+        // Report what the resolver said. A null result with no error is the
+        // one case that really is "not found".
+        if (error == 0) {
+            error = DNS_EAI_NONAME;
+        }
+        common_hal_socketpool_socketpool_raise_gaierror(error);
     }
 
     memcpy(addr, result_i->ai_addr, sizeof(struct sockaddr_storage));
@@ -165,7 +171,7 @@ static bool _socketpool_socket(socketpool_socketpool_obj_t *self,
     }
 
     // Sockets should be nonblocking in most cases.
-    if (zsock_fcntl(socknum, F_SETFL, O_NONBLOCK) < 0) {
+    if (zsock_fcntl(socknum, F_SETFL, ZVFS_O_NONBLOCK) < 0) {
         // Ignore if non-blocking is unsupported.
     }
 
@@ -217,15 +223,6 @@ int socketpool_socket_accept(socketpool_socket_obj_t *self, mp_obj_t *peer_out, 
             timed_out = supervisor_ticks_ms64() - start_ticks >= self->timeout_ms;
         }
         RUN_BACKGROUND_TASKS;
-        #if CIRCUITPY_HOSTNETWORK
-        if (self->timeout_ms == 0) {
-            struct zsock_timeval tv = {
-                .tv_sec = 0,
-                .tv_usec = 1000,
-            };
-            zsock_setsockopt(self->num, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-        }
-        #endif
         newsoc = zsock_accept(self->num, (struct sockaddr *)&peer_addr, &socklen);
         // In non-blocking mode, fail instead of timing out
         if (newsoc == -1 && (self->timeout_ms == 0 || mp_hal_is_interrupted())) {
@@ -245,7 +242,7 @@ int socketpool_socket_accept(socketpool_socket_obj_t *self, mp_obj_t *peer_out, 
     }
 
     // We got a socket. New client socket will not be non-blocking by default, so make it non-blocking.
-    if (zsock_fcntl(newsoc, F_SETFL, O_NONBLOCK) < 0) {
+    if (zsock_fcntl(newsoc, F_SETFL, ZVFS_O_NONBLOCK) < 0) {
         // Ignore if non-blocking is unsupported.
     }
 

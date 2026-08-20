@@ -364,6 +364,11 @@ bool common_hal_picodvi_framebuffer_deinited(picodvi_framebuffer_obj_t *self) {
 void common_hal_picodvi_framebuffer_refresh(picodvi_framebuffer_obj_t *self) {
 }
 
+void common_hal_picodvi_framebuffer_wait_for_vblank(picodvi_framebuffer_obj_t *self) {
+    // No frame-boundary counter on the RP2040 PIO-DVI path; vblank sync is a no-op here (the
+    // tear-free full-repaint path is RP2350/HSTX, e.g. Fruit Jam). Present so the binding links.
+}
+
 int common_hal_picodvi_framebuffer_get_width(picodvi_framebuffer_obj_t *self) {
     return self->width;
 }
