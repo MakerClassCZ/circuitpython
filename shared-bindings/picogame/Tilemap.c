@@ -57,29 +57,43 @@ static mp_obj_t picogame_tilemap_make_new(const mp_obj_type_t *type, size_t n_ar
     return MP_OBJ_FROM_PTR(self);
 }
 
-//|     def tile(
+//|     def get_tile(self, tx: int, ty: int) -> int:
+//|         """Return the tile index at (tx, ty). Out-of-range reads as 0."""
+//|         ...
+//|
+static mp_obj_t picogame_tilemap_get_tile(mp_obj_t self_in, mp_obj_t tx_in, mp_obj_t ty_in) {
+    picogame_tilemap_obj_t *self = MP_OBJ_TO_PTR(self_in);
+    int tx = mp_obj_get_int(tx_in);
+    int ty = mp_obj_get_int(ty_in);
+    if (tx < 0 || ty < 0 || tx >= self->map_w || ty >= self->map_h) {
+        return MP_OBJ_NEW_SMALL_INT(0);
+    }
+    return MP_OBJ_NEW_SMALL_INT(self->map[(size_t)ty * self->map_w + tx]);
+}
+static MP_DEFINE_CONST_FUN_OBJ_3(picogame_tilemap_get_tile_obj, picogame_tilemap_get_tile);
+
+//|     def set_tile(
 //|         self,
 //|         tx: int,
 //|         ty: int,
-//|         value: Optional[int] = None,
+//|         value: int,
 //|         *,
 //|         flip_x: bool = False,
 //|         flip_y: bool = False,
 //|         transpose: bool = False,
-//|     ) -> Optional[int]:
-//|         """Get the tile at (tx, ty) -> int; with ``value``, set it (and mark dirty) -> None.
-//|         The optional keyword ``flip_x``/``flip_y``/``transpose`` flags orient the tile - together
-//|         they give all 8 orientations (4 rotations x mirror) for free at draw time; use them
-//|         with a deduplicated tileset (png2picogame --dedup REMAP). Out-of-range reads as 0,
-//|         ignores writes."""
+//|     ) -> None:
+//|         """Set the tile at (tx, ty) and mark it dirty. The keyword ``flip_x``/``flip_y``/
+//|         ``transpose`` flags orient the tile - together they give all 8 orientations
+//|         (4 rotations x mirror) for free at draw time; use them with a deduplicated tileset
+//|         (png2picogame --dedup REMAP). Out-of-range writes are ignored."""
 //|         ...
 //|
-static mp_obj_t picogame_tilemap_tile(size_t n_args, const mp_obj_t *pos_args, mp_map_t *kw_args) {
+static mp_obj_t picogame_tilemap_set_tile(size_t n_args, const mp_obj_t *pos_args, mp_map_t *kw_args) {
     enum { ARG_tx, ARG_ty, ARG_value, ARG_flip_x, ARG_flip_y, ARG_transpose };
     static const mp_arg_t allowed_args[] = {
         { MP_QSTR_tx, MP_ARG_REQUIRED | MP_ARG_INT },
         { MP_QSTR_ty, MP_ARG_REQUIRED | MP_ARG_INT },
-        { MP_QSTR_value, MP_ARG_OBJ, {.u_obj = mp_const_none} },
+        { MP_QSTR_value, MP_ARG_REQUIRED | MP_ARG_INT },
         { MP_QSTR_flip_x, MP_ARG_KW_ONLY | MP_ARG_BOOL, {.u_bool = false} },
         { MP_QSTR_flip_y, MP_ARG_KW_ONLY | MP_ARG_BOOL, {.u_bool = false} },
         { MP_QSTR_transpose, MP_ARG_KW_ONLY | MP_ARG_BOOL, {.u_bool = false} },
@@ -89,51 +103,45 @@ static mp_obj_t picogame_tilemap_tile(size_t n_args, const mp_obj_t *pos_args, m
     picogame_tilemap_obj_t *self = MP_OBJ_TO_PTR(pos_args[0]);
     int tx = args[ARG_tx].u_int;
     int ty = args[ARG_ty].u_int;
-    bool oob = (tx < 0 || ty < 0 || tx >= self->map_w || ty >= self->map_h);
-    if (args[ARG_value].u_obj != mp_const_none) {
-        if (!oob) {
-            size_t off = (size_t)ty * self->map_w + tx;
-            uint8_t v = mp_obj_get_int(args[ARG_value].u_obj) & 0xff;
-            uint8_t o = 0;
-            if (args[ARG_flip_x].u_bool) {
-                o |= 1;
-            }
-            if (args[ARG_flip_y].u_bool) {
-                o |= 2;
-            }
-            if (args[ARG_transpose].u_bool) {
-                o |= 4;
-            }
-            // Allocate the orientation plane lazily - only maps that actually use flips/rotation
-            // pay the RAM (1 byte/cell).
-            if (o != 0 && self->orient == NULL) {
-                mp_obj_t ob = mp_obj_new_bytearray_of_zeros((size_t)self->map_w * self->map_h);
-                mp_buffer_info_t oi;
-                mp_get_buffer_raise(ob, &oi, MP_BUFFER_RW);
-                self->orient = oi.buf;
-                self->orient_obj = ob;
-            }
-            uint8_t old_o = self->orient ? self->orient[off] : 0;
-            if (self->map[off] != v || old_o != o) {
-                self->map[off] = v;
-                if (self->orient) {
-                    self->orient[off] = o;
-                }
-                int tw = self->tileset ? self->tileset->width : 0;
-                int th = self->tileset ? self->tileset->height : 0;
-                int sx = self->x + tx * tw;
-                int sy = self->y + ty * th;
-                picogame_tilemap_dirty_union(self, sx, sy, sx + tw, sy + th);
-            }
-        }
+    if (tx < 0 || ty < 0 || tx >= self->map_w || ty >= self->map_h) {
         return mp_const_none;
     }
-    if (oob) {
-        return MP_OBJ_NEW_SMALL_INT(0);
+    size_t off = (size_t)ty * self->map_w + tx;
+    uint8_t v = args[ARG_value].u_int & 0xff;
+    uint8_t o = 0;
+    if (args[ARG_flip_x].u_bool) {
+        o |= 1;
     }
-    return MP_OBJ_NEW_SMALL_INT(self->map[(size_t)ty * self->map_w + tx]);
+    if (args[ARG_flip_y].u_bool) {
+        o |= 2;
+    }
+    if (args[ARG_transpose].u_bool) {
+        o |= 4;
+    }
+    // Allocate the orientation plane lazily - only maps that actually use flips/rotation
+    // pay the RAM (1 byte/cell).
+    if (o != 0 && self->orient == NULL) {
+        mp_obj_t ob = mp_obj_new_bytearray_of_zeros((size_t)self->map_w * self->map_h);
+        mp_buffer_info_t oi;
+        mp_get_buffer_raise(ob, &oi, MP_BUFFER_RW);
+        self->orient = oi.buf;
+        self->orient_obj = ob;
+    }
+    uint8_t old_o = self->orient ? self->orient[off] : 0;
+    if (self->map[off] != v || old_o != o) {
+        self->map[off] = v;
+        if (self->orient) {
+            self->orient[off] = o;
+        }
+        int tw = self->tileset ? self->tileset->width : 0;
+        int th = self->tileset ? self->tileset->height : 0;
+        int sx = self->x + tx * tw;
+        int sy = self->y + ty * th;
+        picogame_tilemap_dirty_union(self, sx, sy, sx + tw, sy + th);
+    }
+    return mp_const_none;
 }
-static MP_DEFINE_CONST_FUN_OBJ_KW(picogame_tilemap_tile_obj, 3, picogame_tilemap_tile);
+static MP_DEFINE_CONST_FUN_OBJ_KW(picogame_tilemap_set_tile_obj, 4, picogame_tilemap_set_tile);
 
 //|     def move(self, x: int, y: int) -> None:
 //|         """Move the whole map to pixel (x, y)."""
@@ -211,7 +219,8 @@ static MP_DEFINE_CONST_FUN_OBJ_1(tilemap_get_rows_obj, tilemap_get_rows);
 MP_PROPERTY_GETTER(tilemap_rows_obj, (mp_obj_t)&tilemap_get_rows_obj);
 
 static const mp_rom_map_elem_t picogame_tilemap_locals_dict_table[] = {
-    { MP_ROM_QSTR(MP_QSTR_tile), MP_ROM_PTR(&picogame_tilemap_tile_obj) },
+    { MP_ROM_QSTR(MP_QSTR_get_tile), MP_ROM_PTR(&picogame_tilemap_get_tile_obj) },
+    { MP_ROM_QSTR(MP_QSTR_set_tile), MP_ROM_PTR(&picogame_tilemap_set_tile_obj) },
     { MP_ROM_QSTR(MP_QSTR_move), MP_ROM_PTR(&picogame_tilemap_move_obj) },
     { MP_ROM_QSTR(MP_QSTR_fill), MP_ROM_PTR(&picogame_tilemap_fill_obj) },
     { MP_ROM_QSTR(MP_QSTR_x), MP_ROM_PTR(&tilemap_x_obj) },
