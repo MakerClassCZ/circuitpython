@@ -375,7 +375,7 @@ void picogame_blit_bitmap_scaled(
         }
         return;
     }
-    if ((scale & 0xFF) == 0 && scale >= 512 && !fx && !fy && fxm == NULL && !s_transp
+    if (scale >= 512 && (scale & (scale - 1)) == 0 && !fx && !fy && fxm == NULL && !s_transp
         && s_fmt == PICOGAME_FMT_PAL8) {
         // Integer upscale, PAL8 - the same idea as the RGB565 2x path above (which exists for the
         // half-res-canvas genre), for the format the engine's art actually uses, and for ANY integer
