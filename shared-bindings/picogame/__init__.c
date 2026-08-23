@@ -14,8 +14,8 @@
 #include "shared-bindings/picogame/__init__.h"
 #include "shared-bindings/picogame/Bitmap.h"
 #include "shared-bindings/picogame/Sprite.h"
+#include "shared-bindings/picogame/Display.h"
 #if CIRCUITPY_PICOGAME_FAST_DISPLAY
-#include "shared-bindings/picogame/Display.h"   // fast DMA backend; absent on portable ports
 #include "common-hal/picogame/Display.h"        // its struct (pg_get_display unwraps the wrapper)
 #endif
 #include "shared-bindings/picogame/Scene.h"
@@ -1310,6 +1310,20 @@ static MP_DEFINE_CONST_FUN_OBJ_1(picogame_repack_obj, picogame_repack);
 #endif // PICOGAME_FAT_PROBE
 // ===== end FAT layout PROBE =====
 
+// Builds without a given display backend still expose its type: constructing it raises, the same
+// way an unsupported rgb444= does, instead of the module changing shape with build flags.
+#if !CIRCUITPY_PICOGAME_FAST_DISPLAY || !CIRCUITPY_PICOGAME_FRAMEBUFFER
+static mp_obj_t pg_stub_make_new(const mp_obj_type_t *type, size_t n_args, size_t n_kw, const mp_obj_t *args) {
+    mp_raise_NotImplementedError(MP_ERROR_TEXT("Operation or feature not supported"));
+}
+#endif
+#if !CIRCUITPY_PICOGAME_FAST_DISPLAY
+MP_DEFINE_CONST_OBJ_TYPE(picogame_display_type, MP_QSTR_Display, MP_TYPE_FLAG_NONE, make_new, pg_stub_make_new);
+#endif
+#if !CIRCUITPY_PICOGAME_FRAMEBUFFER
+MP_DEFINE_CONST_OBJ_TYPE(picogame_framebuffer_type, MP_QSTR_Framebuffer, MP_TYPE_FLAG_NONE, make_new, pg_stub_make_new);
+#endif
+
 static const mp_rom_map_elem_t picogame_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR___name__), MP_ROM_QSTR(MP_QSTR_picogame) },
     #if CIRCUITPY_PICOGAME_ROMFS
@@ -1331,9 +1345,7 @@ static const mp_rom_map_elem_t picogame_module_globals_table[] = {
     #endif
     { MP_ROM_QSTR(MP_QSTR_Bitmap), MP_ROM_PTR(&picogame_bitmap_type) },
     { MP_ROM_QSTR(MP_QSTR_Sprite), MP_ROM_PTR(&picogame_sprite_type) },
-    #if CIRCUITPY_PICOGAME_FAST_DISPLAY
     { MP_ROM_QSTR(MP_QSTR_Display), MP_ROM_PTR(&picogame_display_type) },
-    #endif
     { MP_ROM_QSTR(MP_QSTR_Scene), MP_ROM_PTR(&picogame_scene_type) },
     { MP_ROM_QSTR(MP_QSTR_Tilemap), MP_ROM_PTR(&picogame_tilemap_type) },
     { MP_ROM_QSTR(MP_QSTR_Particles), MP_ROM_PTR(&picogame_particles_type) },
@@ -1343,9 +1355,7 @@ static const mp_rom_map_elem_t picogame_module_globals_table[] = {
     #if CIRCUITPY_PICODVI && defined(__RP2350__)
     { MP_ROM_QSTR(MP_QSTR_vblank), MP_ROM_PTR(&picogame_vblank_obj) },
     #endif
-    #if CIRCUITPY_PICOGAME_FRAMEBUFFER
     { MP_ROM_QSTR(MP_QSTR_Framebuffer), MP_ROM_PTR(&picogame_framebuffer_type) },
-    #endif
     { MP_ROM_QSTR(MP_QSTR_render), MP_ROM_PTR(&picogame_render_obj) },
     { MP_ROM_QSTR(MP_QSTR_raycast), MP_ROM_PTR(&picogame_raycast_obj) },
     { MP_ROM_QSTR(MP_QSTR_road_edges), MP_ROM_PTR(&picogame_road_edges_obj) },
@@ -1382,6 +1392,16 @@ static const mp_rom_map_elem_t picogame_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR_RGB444_SUPPORTED), MP_ROM_TRUE },
     #else
     { MP_ROM_QSTR(MP_QSTR_RGB444_SUPPORTED), MP_ROM_FALSE },
+    #endif
+    #if CIRCUITPY_PICOGAME_FAST_DISPLAY
+    { MP_ROM_QSTR(MP_QSTR_FAST_DISPLAY_SUPPORTED), MP_ROM_TRUE },
+    #else
+    { MP_ROM_QSTR(MP_QSTR_FAST_DISPLAY_SUPPORTED), MP_ROM_FALSE },
+    #endif
+    #if CIRCUITPY_PICOGAME_FRAMEBUFFER
+    { MP_ROM_QSTR(MP_QSTR_FRAMEBUFFER_SUPPORTED), MP_ROM_TRUE },
+    #else
+    { MP_ROM_QSTR(MP_QSTR_FRAMEBUFFER_SUPPORTED), MP_ROM_FALSE },
     #endif
     // Build-time default render-strip height (rows). picogame_game.setup() uses it when strip_h is
     // None; games can override per call; a board can override the default in mpconfigboard.h.
