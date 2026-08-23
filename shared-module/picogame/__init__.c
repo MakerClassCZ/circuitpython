@@ -375,6 +375,81 @@ void picogame_blit_bitmap_scaled(
         }
         return;
     }
+    if ((scale & 0xFF) == 0 && scale >= 512 && !fx && !fy && fxm == NULL && !s_transp
+        && s_fmt == PICOGAME_FMT_PAL8) {
+        // Integer upscale, PAL8 - the same idea as the RGB565 2x path above (which exists for the
+        // half-res-canvas genre), for the format the engine's art actually uses, and for ANY integer
+        // factor rather than just 2. At an integer scale the DDA collapses: every source pixel maps
+        // to exactly `nrep` dest pixels and every source row to `nrep` dest rows, so a row is
+        // rasterized once and its repeats are memcpy'd.
+        //
+        // WHY IT MATTERS - it is a RAM technique, not just a speed one: art kept at 1/nrep and
+        // upscaled costs 1/nrep^2 of the bitmap. A 320x100 PAL8 parallax band is 31.2 kB at 1:1 but
+        // 7.8 kB at half size, and RP2040 has 25-40 kB of heap. Making the upscale cheap is what
+        // makes that trade attractive instead of merely possible.
+        //
+        // Transparency is deliberately NOT handled here: a skipped pixel must keep ITS OWN row's
+        // background, so the repeats cannot be memcpy'd, and measurement showed the remaining win
+        // (0.1-0.2 ms on the small transparent sprites that actually exist) did not justify the flash.
+        const int nrep = scale >> 8;
+        const int dy_rel = y_start - dy0, dx_rel = x_start - dx0;
+        int sy = dy_rel / nrep;
+        int rem = nrep - (dy_rel % nrep);        // dest rows this source row still owns
+        const int sx0 = dx_rel / nrep, hoff = dx_rel % nrep;
+        const int nwin = x_end - x_start;
+        bool draw = true;
+        uint16_t *rep_from = NULL;
+        for (int y = y_start; y < y_end; y++) {
+            uint16_t *drow = buf + (y - oy) * bw + (x_start - ox);
+            if (draw) {
+                const uint8_t *sp = s_data + sy * stride + frame_col + sx0;
+                uint16_t *d = drow;
+                int n = nwin;
+                int first = nrep - hoff;         // the leading source pixel may be partly clipped
+                if (first > n) {
+                    first = n;
+                }
+                uint16_t c = s_pal[*sp++];
+                for (int i = 0; i < first; i++) {
+                    *d++ = c;
+                }
+                n -= first;
+                if (nrep == 2) {                 // the common case, unrolled: two stores, no counter
+                    while (n >= 2) {
+                        c = s_pal[*sp++];
+                        d[0] = c;
+                        d[1] = c;
+                        d += 2;
+                        n -= 2;
+                    }
+                } else {
+                    while (n >= nrep) {
+                        c = s_pal[*sp++];
+                        for (int i = 0; i < nrep; i++) {
+                            *d++ = c;
+                        }
+                        n -= nrep;
+                    }
+                }
+                if (n) {                         // trailing partial group
+                    c = s_pal[*sp];
+                    while (n--) {
+                        *d++ = c;
+                    }
+                }
+                rep_from = drow;
+                draw = false;
+            } else {
+                memcpy(drow, rep_from, (size_t)nwin * 2);
+            }
+            if (--rem == 0) {
+                sy++;
+                rem = nrep;
+                draw = true;
+            }
+        }
+        return;
+    }
     uint32_t step = ((uint32_t)1 << 24) / scale;     // source px per dest px, 16.16
     // No per-row sy>=sh / per-pixel sx>=sw clamp: with dw=(sd*scale)>>8 and step=floor(2^24/scale),
     // the sampled index ((dw-1)*step)>>16 provably never reaches the source dimension (exhaustively
