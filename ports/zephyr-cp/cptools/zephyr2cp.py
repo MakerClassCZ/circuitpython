@@ -1,5 +1,6 @@
 import logging
 import pathlib
+import re
 
 import cpbuild
 import yaml
@@ -474,6 +475,33 @@ def find_ram_regions(device_tree):
     return rams
 
 
+# gpio-keys nodes identify a key with `zephyr,code` rather than the optional and
+# deprecated `label`, so the code is the only name a modern board gives.
+INPUT_KEY_NAMES = {}
+
+
+def _populate_input_key_names():
+    header = (
+        pathlib.Path(__file__).parent.parent
+        / "zephyr"
+        / "include"
+        / "zephyr"
+        / "dt-bindings"
+        / "input"
+        / "input-event-codes.h"
+    )
+    if not header.exists():
+        return
+    pattern = re.compile(r"^#define\s+INPUT_(?P<name>KEY_\w+)\s+(?P<code>\d+)")
+    for line in header.read_text().splitlines():
+        match = pattern.match(line)
+        if match:
+            INPUT_KEY_NAMES.setdefault(int(match.group("code")), match.group("name"))
+
+
+_populate_input_key_names()
+
+
 @cpbuild.run_in_thread
 def zephyr_dts_to_cp_board(board_id, portdir, builddir, zephyrbuilddir, mpconfigboard=None):  # noqa: C901
     board_dir = builddir / "board"
@@ -517,7 +545,15 @@ def zephyr_dts_to_cp_board(board_id, portdir, builddir, zephyrbuilddir, mpconfig
     else:
         board_yaml = board_yaml["board"]
     board_info["vendor_id"] = board_yaml["vendor"]
-    vendor_index = zephyr_board_dir.parent / "index.rst"
+    # Most vendors put boards directly in boards/<vendor>/<board>, but some group
+    # them further, like boards/silabs/dev_kits/<board>. Walk up to the directory
+    # named for the vendor so we read the vendor's index.rst and not a category's.
+    vendor_dir = zephyr_board_dir.parent
+    for parent in zephyr_board_dir.parents:
+        if parent.name == board_info["vendor_id"]:
+            vendor_dir = parent
+            break
+    vendor_index = vendor_dir / "index.rst"
     if vendor_index.exists():
         vendor_index = vendor_index.read_text()
         vendor_index = vendor_index.split("\n")
@@ -700,7 +736,15 @@ def zephyr_dts_to_cp_board(board_id, portdir, builddir, zephyrbuilddir, mpconfig
 
                 if (ioport, num) not in board_names:
                     board_names[(ioport, num)] = []
-                board_names[(ioport, num)].append(props["label"].to_string())
+                # `label` is optional and deprecated on gpio-keys. Modern
+                # boards identify keys with `zephyr,code`, so fall back to the
+                # name of that code.
+                if "label" in props:
+                    board_names[(ioport, num)].append(props["label"].to_string())
+                elif "zephyr,code" in props:
+                    key_code = props["zephyr,code"].to_num()
+                    if key_code in INPUT_KEY_NAMES:
+                        board_names[(ioport, num)].append(INPUT_KEY_NAMES[key_code])
                 if key in node2alias:
                     if "sw0" in node2alias[key]:
                         board_names[(ioport, num)].append("BUTTON")
