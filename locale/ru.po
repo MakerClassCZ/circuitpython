@@ -4268,6 +4268,10 @@ msgstr ""
 "Временная метка выходит за пределы допустимого диапазона для платформы time_t"
 
 #: shared-bindings/traceback/__init__.c
+msgid "Supply both or neither of %q and %q"
+msgstr ""
+
+#: shared-bindings/traceback/__init__.c
 msgid "file write is not available"
 msgstr "Запись файлов недоступна"
 
