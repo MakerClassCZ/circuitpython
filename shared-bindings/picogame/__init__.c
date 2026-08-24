@@ -124,7 +124,41 @@ static mp_obj_t picogame_rgb565(mp_obj_t r_in, mp_obj_t g_in, mp_obj_t b_in) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_3(picogame_rgb565_obj, picogame_rgb565);
 
-// raycast(map, mw, mh, posx, posy, lrx, lry, srx, sry, sh, stride, ncols, wcolors, top, bot, col, dist)
+//| def raycast(
+//|     map: ReadableBuffer,
+//|     mw: int,
+//|     mh: int,
+//|     posx: int,
+//|     posy: int,
+//|     lrx: int,
+//|     lry: int,
+//|     srx: int,
+//|     sry: int,
+//|     sh: int,
+//|     stride: int,
+//|     ncols: int,
+//|     wcolors: ReadableBuffer,
+//|     top: WriteableBuffer,
+//|     bot: WriteableBuffer,
+//|     col: WriteableBuffer,
+//|     dist: WriteableBuffer,
+//|     runs: Optional[WriteableBuffer] = None,
+//| ) -> Optional[int]:
+//|     """Cast one frame of DDA wall rays (the compute core of the ``picogame_ray`` helper).
+//|
+//|     ``map`` holds ``mw*mh`` wall-type bytes (0 = empty). The camera position
+//|     (``posx``/``posy``), the column-0 ray (``lrx``/``lry``) and the per-column ray step
+//|     (``srx``/``sry``) are 16.16 fixed-point; ``sh`` is the screen height and ``stride``
+//|     the pixel width of one column. For each of the ``ncols`` columns the wall top/bottom
+//|     rows, the wall colour (near/side pairs from ``wcolors``) and the perpendicular
+//|     distance (16.16, into ``dist``) are written to the output buffers.
+//|
+//|     With ``runs`` (a ``uint16`` buffer of at least ``5*ncols``, five ``ncols``-long
+//|     planes: x0s, x1s, tops, bots, colors) adjacent equal columns are merged into wall
+//|     runs for :py:meth:`Canvas.vspans` and the run count is returned; without it
+//|     returns ``None``."""
+//|     ...
+//|
 // C DDA wall raycaster for picogame_ray.Raycaster - INTEGER ONLY (16.16 fixed-point, no FPU; the paint,
 // temporal invalidate, pose-cache and billboard math stay in Python; Python does the once-per-frame
 // trig and passes Q16 ray params). map: read-only bytes, mw*mh wall types (0 = empty). pos*, l*x/l*y
@@ -274,6 +308,26 @@ static mp_obj_t picogame_raycast(size_t n_args, const mp_obj_t *args) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(picogame_raycast_obj, 17, 18, picogame_raycast);
 
+//| def road_edges(
+//|     rl: WriteableBuffer,
+//|     rr: WriteableBuffer,
+//|     hw: ReadableBuffer,
+//|     n: int,
+//|     cx0: int,
+//|     dist: int,
+//|     cfg: ReadableBuffer,
+//| ) -> None:
+//|     """Compute one racing-road frame's left/right edge columns (the OutRun-style
+//|     ``compute_road`` loop of the ``picogame_road`` helper).
+//|
+//|     Walks ``n`` screen rows bottom-up, accumulating the road curve, and writes the
+//|     left/right edge x coordinates into the ``int16`` buffers ``rl``/``rr``.
+//|     ``hw`` holds per-row half-widths (``int32``, 16.16), ``cx0`` is the 16.16 screen
+//|     centre including lateral offset, ``dist`` the integer world distance and ``cfg``
+//|     seven ``int32`` curve parameters (layout documented in the shared-module core)."""
+//|     ...
+//|
+
 #if defined(PICOGAME_CORE1_PROBE)
 // core1(on) - PROBE toggle: route splittable kernels (mode7 rows for now) through the second-core
 // fork-join helper. Temporary API for A/B measurement; the final shape lands after the probe verdict.
@@ -325,6 +379,24 @@ static mp_obj_t picogame_road_edges_fn(size_t n_args, const mp_obj_t *args) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(picogame_road_edges_obj, 7, 7, picogame_road_edges_fn);
 
+//| def project(
+//|     cam: ReadableBuffer,
+//|     pts: ReadableBuffer,
+//|     n: int,
+//|     out_sx: WriteableBuffer,
+//|     out_sy: WriteableBuffer,
+//| ) -> None:
+//|     """Batch-project ``n`` 3D world points to screen coordinates (the shared hot path
+//|     of the pseudo-3D helpers - project a box's corners, then fill triangles).
+//|
+//|     ``cam`` holds 15 camera parameters (eye x/y/z, right x/z, up x/y/z,
+//|     forward x/y/z, focal, screen centre x/y, near); ``pts`` holds ``n*3`` world
+//|     coordinates. Screen x/y land in the ``int16`` buffers ``out_sx``/``out_sy``;
+//|     a point behind the near plane gets the sentinel ``-32768``. On an FPU build
+//|     (``picogame.FPU`` is 1) ``cam``/``pts`` are ``float32``, otherwise 16.16
+//|     fixed-point ``int32``."""
+//|     ...
+//|
 // project(cam, pts, n, out_sx, out_sy) - batch perspective projection of `n` 3D points to screen.
 //   cam  = 15 camera params: ex,ey,ez, rx,rz, ux,uy,uz, fx,fy,fz, focal, cx0, cy0, near
 //   pts  = n*3 world coords (x,y,z per point)
