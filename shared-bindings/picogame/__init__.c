@@ -21,6 +21,9 @@
 #include "shared-bindings/picogame/Particles.h"
 #include "shared-bindings/picogame/Canvas.h"
 #include "shared-bindings/picogame/Framebuffer.h"
+#if CIRCUITPY_PICODVI && defined(__RP2350__)
+#include "bindings/picodvi/Framebuffer.h"   // wait_for_vblank lives in the port
+#endif
 #include "shared-bindings/picogame/StripDraw.h"
 #include "shared-bindings/picogame/Triangles.h"
 #include "shared-module/picogame/__init__.h"
@@ -969,8 +972,59 @@ MP_DEFINE_CONST_OBJ_TYPE(picogame_display_type, MP_QSTR_Display, MP_TYPE_FLAG_NO
 MP_DEFINE_CONST_OBJ_TYPE(picogame_framebuffer_type, MP_QSTR_Framebuffer, MP_TYPE_FLAG_NONE, make_new, pg_stub_make_new);
 #endif
 
+#if CIRCUITPY_PICODVI && defined(__RP2350__)
+//| def vblank(framebuffer: picodvi.Framebuffer) -> None:
+//|     """Block until the DVI scanout's next vertical blanking (up to ~16.7 ms). Starting a
+//|     full-frame compose right after vblank keeps the publish front consistently behind the
+//|     beam, so each sweep shows one WHOLE frame (old or new) - removes single-buffer tearing
+//|     when the compose fits within two sweeps. Costs the wait: budget it against your cap."""
+//|     ...
+// Waiting is the port's job: common-hal owns the frame counter and the timeout that keeps a
+// stopped or absent DVI signal from hanging the caller. Pass the picodvi.Framebuffer the display
+// was built on (picogame_game keeps it); anything else is not a scanout we can sync to.
+static mp_obj_t picogame_vblank_fn(mp_obj_t fb_in) {
+    picodvi_framebuffer_obj_t *fb = mp_arg_validate_type(fb_in, &picodvi_framebuffer_type, MP_QSTR_framebuffer);
+    common_hal_picodvi_framebuffer_wait_for_vblank(fb);
+    return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_1(picogame_vblank_obj, picogame_vblank_fn);
+#endif
+
+#if defined(PICOGAME_CORE1_PROBE)
+// core1(on) - PROBE toggle: route splittable kernels (mode7 rows for now) through the second-core
+// fork-join helper. Temporary API for A/B measurement; the final shape lands after the probe verdict.
+static mp_obj_t picogame_core1_fn(mp_obj_t on) {
+    // Returns the RESULTING state: False when core1 is unavailable (e.g. the PIO-USB
+    // host owns it - Fruit Jam constructs that in board.c), so callers can report it.
+    picogame_core1_set_enabled(mp_obj_is_true(on));
+    return mp_obj_new_bool(picogame_core1_enabled());
+}
+static MP_DEFINE_CONST_FUN_OBJ_1(picogame_core1_obj, picogame_core1_fn);
+#endif
+
+#if defined(PICOGAME_CORE1_PROBE) && CIRCUITPY_PICOGAME_FAST_DISPLAY
+// refresh_async(on) - PROBE: scene.refresh() submits the whole compose+send to core1 and returns
+// immediately (frame = max(Python, refresh) instead of the sum). Sprite/Tilemap/Canvas scenes only
+// (StripDraw falls back to today's synchronous path). Temporary API for the Stage-3 estimate.
+extern bool picogame_scene_refresh_async_enabled;
+static mp_obj_t picogame_refresh_async_fn(mp_obj_t on) {
+    picogame_scene_refresh_async_enabled = mp_obj_is_true(on);
+    return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_1(picogame_refresh_async_obj, picogame_refresh_async_fn);
+#endif
+
 static const mp_rom_map_elem_t picogame_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR___name__), MP_ROM_QSTR(MP_QSTR_picogame) },
+    #if CIRCUITPY_PICODVI && defined(__RP2350__)
+    { MP_ROM_QSTR(MP_QSTR_vblank), MP_ROM_PTR(&picogame_vblank_obj) },
+    #endif
+    #if defined(PICOGAME_CORE1_PROBE)
+    { MP_ROM_QSTR(MP_QSTR_core1), MP_ROM_PTR(&picogame_core1_obj) },
+    #if CIRCUITPY_PICOGAME_FAST_DISPLAY
+    { MP_ROM_QSTR(MP_QSTR_refresh_async), MP_ROM_PTR(&picogame_refresh_async_obj) },
+    #endif
+    #endif
     { MP_ROM_QSTR(MP_QSTR_Bitmap), MP_ROM_PTR(&picogame_bitmap_type) },
     { MP_ROM_QSTR(MP_QSTR_Sprite), MP_ROM_PTR(&picogame_sprite_type) },
     { MP_ROM_QSTR(MP_QSTR_Display), MP_ROM_PTR(&picogame_display_type) },
