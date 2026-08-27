@@ -507,6 +507,12 @@ endif
 
 SRC_C += shared/runtime/gchelper_native.c
 
+# FAT layout PROBE (pg.fat_layout / fat_max_free_run / repack): bench-only, measures and fixes
+# file fragmentation on CIRCUITPY. Opt in: make BOARD=... PICOGAME_FAT_PROBE=1
+ifeq ($(PICOGAME_FAT_PROBE),1)
+CFLAGS += -DPICOGAME_FAT_PROBE=1 -DFF_USE_EXPAND=1
+endif
+
 ifeq ($(CIRCUITPY_PICOGAME),1)
 # SIO interpolator fast path for the picogame mode7 inner row (RP2040 + RP2350).
 # Portable C remains the fallback on other ports.

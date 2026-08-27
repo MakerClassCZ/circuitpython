@@ -149,6 +149,24 @@ static mp_uint_t flash_read_blocks(mp_obj_t self_in, uint8_t *dest, uint32_t blo
     return supervisor_flash_read_blocks(dest, block_num, num_blocks);
 }
 
+__attribute__((weak)) const uint8_t *port_internal_flash_xip_address(uint32_t block) {
+    return NULL;
+}
+
+const uint8_t *supervisor_flash_xip_address(uint32_t fatfs_sector) {
+    if (fatfs_sector < PART1_START_BLOCK) {
+        return NULL;
+    }
+    uint32_t block = fatfs_sector - PART1_START_BLOCK;
+    #if CIRCUITPY_SAVES_PARTITION_SIZE > 0
+    block += CIRCUITPY_SAVES_PARTITION_SIZE / FILESYSTEM_BLOCK_SIZE;
+    #endif
+    if (block >= supervisor_flash_get_block_count()) {
+        return NULL;
+    }
+    return port_internal_flash_xip_address(block);
+}
+
 static volatile bool filesystem_dirty = false;
 
 static mp_uint_t flash_write_blocks(mp_obj_t self_in, const uint8_t *src, uint32_t block_num, uint32_t num_blocks) {
