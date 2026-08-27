@@ -40,10 +40,13 @@
 //|     ``(vx, vy)`` is the view origin in screen coordinates and ``(vw, vh)`` is
 //|     its size: to draw a screen point ``(sx, sy)``, draw at ``(sx - vx, sy - vy)``
 //|     in ``view``. The view may span the full render-region width even when the
-//|     layer is narrower (the layer's rectangle only selects which rows run), so
-//|     fill your own rectangle with :py:meth:`Canvas.fill_rect` rather than
-//|     ``view.clear()``, which fills the whole width. Text drawn with
-//|     :py:meth:`Canvas.text` supports ASCII only."""
+//|     layer is narrower (the layer's rectangle only limits which rows are drawn),
+//|     so fill your own rectangle with :py:meth:`Canvas.fill_rect` rather than
+//|     ``view.clear()``, which fills the whole width.
+//|
+//|     Moving or resizing the layer by assigning :py:attr:`x`, :py:attr:`y`,
+//|     :py:attr:`width` or :py:attr:`height` can leave the old area stale; call
+//|     :py:meth:`Scene.invalidate` afterwards for a clean repaint."""
 //|
 //|     def __init__(
 //|         self,
@@ -61,7 +64,8 @@
 //|         :param int y: top edge of the layer's screen rectangle
 //|         :param int width: rectangle width in pixels
 //|         :param int height: rectangle height in pixels
-//|         :param bool always_dirty: see :py:attr:`always_dirty`"""
+//|         :param bool always_dirty: when `True` the layer redraws every refresh;
+//|             when `False`, call :py:meth:`invalidate` after its content changes"""
 //|         ...
 //|
 static mp_obj_t picogame_stripdraw_make_new(const mp_obj_type_t *type, size_t n_args,
@@ -112,10 +116,7 @@ static mp_obj_t picogame_stripdraw_make_new(const mp_obj_type_t *type, size_t n_
 //|     width: int
 //|     """Width of the layer's screen rectangle in pixels."""
 //|     height: int
-//|     """Height of the layer's screen rectangle in pixels.
-//|
-//|     Moving or resizing the rectangle by assigning any of these can leave the old
-//|     area stale; call :py:meth:`Scene.invalidate` afterwards for a clean repaint."""
+//|     """Height of the layer's screen rectangle in pixels."""
 static mp_obj_t sd_get_x(mp_obj_t self_in) {
     return MP_OBJ_NEW_SMALL_INT(((picogame_stripdraw_obj_t *)MP_OBJ_TO_PTR(self_in))->x);
 }

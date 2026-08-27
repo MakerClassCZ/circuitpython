@@ -96,7 +96,8 @@ static mp_obj_t scene_resolve_target(mp_obj_t disp, bool *fast, bool *fb_target)
 //|         :param int right: columns at the right edge the scene never renders into
 //|
 //|         The four border insets reserve screen edges for content the application
-//|         draws itself; the scene renders only the inner rectangle."""
+//|         draws itself, for example with :py:func:`render`; the scene renders only
+//|         the inner rectangle and never repaints the border."""
 //|         ...
 //|
 static mp_obj_t picogame_scene_make_new(const mp_obj_type_t *type, size_t n_args,
@@ -463,8 +464,8 @@ static mp_obj_t scene_refresh_fb(picogame_scene_obj_t *self) {
 #endif // CIRCUITPY_PICOGAME_FRAMEBUFFER
 
 //|     def refresh(self) -> Optional[list]:
-//|         """Repaint the regions reported changed by the scene's layers since the
-//|         previous refresh. Returns the bounding dirty rectangle as a list
+//|         """Repaint the regions changed by the scene's layers since the previous
+//|         refresh. Returns the bounding dirty rectangle as a list
 //|         ``[x1, y1, x2, y2]`` with exclusive ``x2``/``y2``, or `None` if nothing
 //|         changed. The returned list object is reused: read it before the next
 //|         ``refresh()`` call."""

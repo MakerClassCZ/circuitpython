@@ -30,9 +30,10 @@
 // ---------------------------------------------------------------------------
 
 //| class Bitmap:
-//|     """An image atlas of one or more equal-size frames, of arbitrary size.
-//|     Pixel data and palette entries must be in the display's transfer byte
-//|     order; use :py:func:`rgb565` to build colors.
+//|     """An image atlas of one or more frames that all share one size. RGB565
+//|     pixel data and palette entries must be in the display's transfer byte
+//|     order (use :py:func:`rgb565` to build colors); PAL8 pixel data are
+//|     palette indices.
 //|
 //|     The bitmap references the caller-provided data without copying or modifying
 //|     it. The backing buffer may live in RAM or in read-only memory."""
@@ -49,8 +50,8 @@
 //|         stride: int = 0,
 //|         transparent: Optional[int] = None,
 //|     ) -> None:
-//|         """:param ~circuitpython_typing.ReadableBuffer data: pixel data in the
-//|             display's transfer byte order
+//|         """:param ~circuitpython_typing.ReadableBuffer data: RGB565 pixel data in
+//|             the display's transfer byte order, or palette indices for ``PAL8``
 //|         :param int width: width of one frame in pixels
 //|         :param int height: height of one frame in pixels
 //|         :param int format: :py:data:`RGB565` (2 bytes per pixel) or :py:data:`PAL8`
@@ -61,9 +62,9 @@
 //|             ``len(palette) // 2``.
 //|         :param int frames: number of equal-size frames, laid out left to right in
 //|             one horizontal atlas
-//|         :param int stride: distance between two rows in pixels. Defaults to
-//|             ``width * frames``; set explicitly to reference a sub-region of a
-//|             wider image.
+//|         :param int stride: distance between two rows in pixels. ``0``, the
+//|             default, means ``width * frames``; set it explicitly to reference a
+//|             sub-region of a wider image.
 //|         :param int transparent: color (``RGB565``) or index (``PAL8``) that is
 //|             skipped when drawing. Defaults to `None`, fully opaque."""
 //|         ...

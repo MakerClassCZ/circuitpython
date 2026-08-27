@@ -11,13 +11,14 @@
 #include "shared-module/picogame/Tilemap.h"
 
 //| class Tilemap:
-//|     """A grid of tile indices into a tileset Bitmap (each frame = one tile).
-//|     Add it to a Scene as a background layer; setting tiles or moving the map
-//|     marks only the affected area dirty."""
+//|     """A grid of tile indices into a tileset `Bitmap`, where each bitmap frame
+//|     is one tile. Add it to a `Scene` as a background layer; setting tiles or
+//|     moving the map marks only the affected area dirty."""
 //|
 //|     def __init__(self, tileset: Bitmap, cols: int, rows: int) -> None:
-//|         """A map ``cols`` tiles wide by ``rows`` tiles tall (each cell indexes a
-//|         frame of ``tileset``)."""
+//|         """:param Bitmap tileset: the tile images, one frame per tile
+//|         :param int cols: map width in tiles
+//|         :param int rows: map height in tiles"""
 //|         ...
 //|
 static mp_obj_t picogame_tilemap_make_new(const mp_obj_type_t *type, size_t n_args,
@@ -85,8 +86,8 @@ static MP_DEFINE_CONST_FUN_OBJ_3(picogame_tilemap_get_tile_obj, picogame_tilemap
 //|         """Set the tile at ``(tx, ty)`` and mark it dirty. The keyword flags orient
 //|         the tile at draw time; together they yield all 8 orientations (4 rotations
 //|         times mirror), so one stored tile can serve as several. The flags can
-//|         represent the remap table emitted by the separately distributed
-//|         ``png2picogame.py --dedup`` tool. Out-of-range writes are ignored."""
+//|         represent the remap table emitted by the ``png2picogame.py --dedup``
+//|         tool. Out-of-range writes are ignored."""
 //|         ...
 //|
 static mp_obj_t picogame_tilemap_set_tile(size_t n_args, const mp_obj_t *pos_args, mp_map_t *kw_args) {

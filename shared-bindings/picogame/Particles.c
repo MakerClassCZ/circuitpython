@@ -26,8 +26,8 @@ static void reset_dirty(picogame_particles_obj_t *self) {
 //|         self, capacity: int, *, size: int = 1, gravity: float = 0.0, fade: bool = False
 //|     ) -> None:
 //|         """``capacity`` is how many particles may be alive at once; the pool is
-//|         allocated once here and never grows, so an ``emit()`` beyond it simply drops the
-//|         extra particles.
+//|         allocated once here and never grows. If :py:meth:`emit` would exceed it,
+//|         the excess particles are dropped.
 //|
 //|         ``size`` is the square side of one particle in pixels. ``gravity`` is added to
 //|         each particle's vertical speed every :py:meth:`tick`. ``fade=True`` dims
@@ -81,7 +81,7 @@ static mp_obj_t picogame_particles_make_new(const mp_obj_type_t *type, size_t n_
 //|         self, x: int, y: int, count: int, speed: int = 1, life: int = 30, color: int = 0xFFFF
 //|     ) -> None:
 //|         """Spawn ``count`` particles at ``(x, y)``, living ``life`` ticks, in
-//|         ``color``. Each particle's horizontal and vertical velocity is chosen
+//|         ``color`` (default white). Each particle's horizontal and vertical velocity is chosen
 //|         independently from ``-speed`` through ``speed`` pixels per tick."""
 //|         ...
 //|

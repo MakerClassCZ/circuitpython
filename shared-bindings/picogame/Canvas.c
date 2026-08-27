@@ -12,8 +12,8 @@
 #include "shared-module/picogame/Canvas.h"
 
 //| class Canvas:
-//|     """A RAM drawing surface of any size, composited as a `Scene` layer. Draw
-//|     primitives into it; only redrawn areas repaint. Colors come from
+//|     """A RAM drawing surface composited as a `Scene` layer. Draw primitives
+//|     into it; only redrawn areas repaint. Colors come from
 //|     :py:func:`rgb565`."""
 //|
 //|     def __init__(
@@ -146,8 +146,8 @@ static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(canvas_fill_rect_obj, 6, 6, canvas_fi
 //|         flip_x: bool = False,
 //|         flip_y: bool = False,
 //|     ) -> None:
-//|         """Stamp frame ``frame`` of ``bitmap`` into the canvas at ``(x, y)``,
-//|         honoring the bitmap's transparent color."""
+//|         """Copy one frame of ``bitmap``, selected by ``frame``, into the canvas
+//|         at ``(x, y)``, honoring the bitmap's transparent color."""
 //|         ...
 //|
 static mp_obj_t canvas_blit(size_t n, const mp_obj_t *a) {
@@ -177,8 +177,7 @@ static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(canvas_blit_obj, 4, 7, canvas_blit);
 //|         cam_y: int,
 //|     ) -> None:
 //|         """Fill rows below ``horizon`` with a perspective projection of ``texture``.
-//|         For a higher-level interface see the separately distributed
-//|         ``picogame_mode7`` helper, which computes the camera terms from an angle,
+//|         The ``picogame_mode7`` helper computes the camera terms from an angle,
 //|         position and field of view.
 //|
 //|         :param Bitmap texture: texture whose width and height are powers of two
@@ -330,9 +329,8 @@ static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(canvas_vspans_obj, 7, 9, canvas_vspan
 //|         d07_q8: int,
 //|         colors: ReadableBuffer,
 //|     ) -> None:
-//|         """Draw one racing-road strip from precomputed tables. This method is
-//|         intended for use by the separately distributed ``picogame_road`` helper,
-//|         which builds the tables.
+//|         """Draw one racing-road strip from precomputed tables. A low-level
+//|         interface used by the ``picogame_road`` helper, which builds the tables.
 //|
 //|         :param int ri0: road-table row of this surface's row 0; negative values
 //|             are sky rows
@@ -511,10 +509,10 @@ static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(canvas_frame3d_obj, 7, 7, canvas_fram
 //|         self, x: int, y: int, s: str, fg: int, font: fontio.BuiltinFont, bg: int | None = None
 //|     ) -> None:
 //|         """Draw ``s`` into the surface, rasterizing each glyph from ``font`` as it
-//|         is drawn; no memory is retained between calls. If ``bg`` is given the glyph
-//|         background is filled with it, otherwise it is transparent. Inside a
-//|         `StripDraw` callback the view is a Canvas, so ``view.text(...)`` draws
-//|         text directly into the frame."""
+//|         is drawn; no memory is retained between calls. Only ASCII characters are
+//|         supported. If ``bg`` is given the glyph background is filled with it,
+//|         otherwise it is transparent. Inside a `StripDraw` callback the view is a
+//|         Canvas, so ``view.text(...)`` draws text directly into the frame."""
 //|         ...
 //|
 static mp_obj_t canvas_text(size_t n, const mp_obj_t *a) {

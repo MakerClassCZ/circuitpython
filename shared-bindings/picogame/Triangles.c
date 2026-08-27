@@ -32,8 +32,8 @@
 //|     pixel buffer is held. Triangles layers always draw in screen coordinates and
 //|     ignore the scene's view offset.
 //|
-//|     A typical frame projects points with :py:func:`project`, fills the arrays in
-//|     place back to front, sets :py:attr:`count` and calls
+//|     For each frame: project points with :py:func:`project`, write triangles
+//|     into the buffers in back-to-front order, set :py:attr:`count`, then call
 //|     :py:meth:`Scene.refresh`."""
 //|
 //|     def __init__(self, verts: ReadableBuffer, colors: ReadableBuffer) -> None:

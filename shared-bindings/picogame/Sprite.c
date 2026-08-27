@@ -50,8 +50,9 @@ static int32_t pg_int_to_fp8(mp_int_t v) {
 //|         flip_x: bool = False,
 //|         flip_y: bool = False,
 //|     ) -> None:
-//|         """Place frame ``frame`` of ``bitmap`` at (``x``, ``y``) - the top-left corner, in
-//|         world pixels, so a sprite on a scrolling layer moves with the view.
+//|         """Place ``bitmap`` with its top-left corner at ``(x, y)`` in scene
+//|         coordinates, showing the frame selected by ``frame``. Scene coordinates
+//|         follow the view offset, so the sprite moves with a scrolling world.
 //|
 //|         ``visible=False`` creates the sprite without drawing it, for example to
 //|         pre-allocate a pool of sprites up front. ``flip_x`` and ``flip_y`` mirror
@@ -312,7 +313,9 @@ MP_PROPERTY_GETSET(sprite_shadow_obj, (mp_obj_t)&sprite_get_shadow_obj, (mp_obj_
 //|     flash: int
 //|     """Draw opaque pixels as one solid color instead of their own, for example as
 //|     a brief hit flash. Set to a color from :py:func:`rgb565` to enable, ``0`` to
-//|     disable. Mutually exclusive with `shadow`, `dither` and `tint`."""
+//|     disable. Because ``0`` disables the effect, pure black cannot be the flash
+//|     color; use a near-black color instead. Mutually exclusive with `shadow`,
+//|     `dither` and `tint`."""
 static mp_obj_t sprite_get_flash(mp_obj_t self_in) {
     picogame_sprite_obj_t *s = MP_OBJ_TO_PTR(self_in);
     return MP_OBJ_NEW_SMALL_INT((s->flags & PICOGAME_SPR_FLASH) ? s->flash_color : 0);
@@ -360,8 +363,9 @@ MP_PROPERTY_GETSET(sprite_dither_obj, (mp_obj_t)&sprite_get_dither_obj, (mp_obj_
 
 //|     tint: int
 //|     """Multiply opaque pixels by a color from :py:func:`rgb565`, preserving the
-//|     sprite's shading (unlike `flash`, which replaces it). ``0`` disables. Mutually
-//|     exclusive with `shadow`, `flash` and `dither`."""
+//|     sprite's shading (unlike `flash`, which replaces it). ``0`` disables, so pure
+//|     black cannot be the tint color. Mutually exclusive with `shadow`, `flash`
+//|     and `dither`."""
 static mp_obj_t sprite_get_tint(mp_obj_t self_in) {
     picogame_sprite_obj_t *s = MP_OBJ_TO_PTR(self_in);
     return MP_OBJ_NEW_SMALL_INT((s->flags & PICOGAME_SPR_TINT) ? s->flash_color : 0);
@@ -381,11 +385,10 @@ static MP_DEFINE_CONST_FUN_OBJ_2(sprite_set_tint_obj, sprite_set_tint);
 MP_PROPERTY_GETSET(sprite_tint_obj, (mp_obj_t)&sprite_get_tint_obj, (mp_obj_t)&sprite_set_tint_obj);
 
 //|     transpose: bool
-//|     """Swap the sprite's x and y axes, turning the frame by 90 degrees without
-//|     resampling. Combined with `flip_x` and `flip_y` this yields all 8
-//|     orientations. Applies only at ``scale == 1.0`` and ``angle == 0``; for
-//|     rotation combined with scaling use `angle`. The drawn footprint swaps
-//|     width and height."""
+//|     """Transpose the frame by swapping its x and y axes. Combined with `flip_x`
+//|     and `flip_y` this yields all 8 orthogonal orientations. Applies only at
+//|     ``scale == 1.0`` and ``angle == 0``; for rotation combined with scaling use
+//|     `angle`. The drawn footprint swaps width and height."""
 static mp_obj_t sprite_get_transpose(mp_obj_t self_in) {
     return mp_obj_new_bool((((picogame_sprite_obj_t *)MP_OBJ_TO_PTR(self_in))->flags & PICOGAME_SPR_TRANSPOSE) != 0);
 }
