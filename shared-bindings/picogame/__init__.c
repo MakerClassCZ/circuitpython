@@ -59,6 +59,17 @@ static MP_DEFINE_CONST_FUN_OBJ_1(picogame_vblank_obj, picogame_vblank_fn);
 // expected, so the same object a Scene renders through also works for render()/invert().
 // Without this, code holding the wrapper (custom setup, rgb444) worked on ports WITHOUT the
 // fast backend and TypeError'd on ports WITH it.
+#if CIRCUITPY_PICOGAME_FRAMEBUFFER
+// Resolve a Framebuffer, or a subclass of it, to the native object; NULL otherwise.
+static picogame_framebuffer_obj_t *pg_fb_native(mp_obj_t obj) {
+    mp_obj_t nfb = mp_obj_cast_to_native_base(obj, &picogame_framebuffer_type);
+    if (nfb != MP_OBJ_NULL && mp_obj_is_type(nfb, &picogame_framebuffer_type)) {
+        return MP_OBJ_TO_PTR(nfb);
+    }
+    return NULL;
+}
+#endif
+
 static busdisplay_busdisplay_obj_t *pg_get_display(mp_obj_t obj) {
     #if CIRCUITPY_PICOGAME_FAST_DISPLAY
     if (mp_obj_is_type(obj, &picogame_display_type)) {
@@ -400,9 +411,12 @@ static mp_obj_t picogame_invert(mp_obj_t display_in, mp_obj_t on_in) {
     #if CIRCUITPY_PICOGAME_FRAMEBUFFER
     // A Framebuffer target (RP2350 DVI, the WASM playground) has no hardware INVON/INVOFF -
     // emulate the flash by XORing the composite (mirrors the Scene/render Framebuffer handling).
-    if (mp_obj_is_type(display_in, &picogame_framebuffer_type)) {
-        picogame_fb_set_invert(mp_obj_is_true(on_in));
-        return mp_const_none;
+    {
+        mp_obj_t nfb = mp_obj_cast_to_native_base(display_in, &picogame_framebuffer_type);
+        if (nfb != MP_OBJ_NULL && mp_obj_is_type(nfb, &picogame_framebuffer_type)) {
+            picogame_fb_set_invert(mp_obj_is_true(on_in));
+            return mp_const_none;
+        }
     }
     #endif
     picogame_set_invert(pg_get_display(display_in), mp_obj_is_true(on_in));
@@ -470,8 +484,7 @@ static mp_obj_t picogame_render_fun(size_t n_args, const mp_obj_t *pos_args, mp_
     // HudBar / immediate-mode path on scanout-buffer platforms. Mirrors the Scene change.
     #if CIRCUITPY_PICOGAME_FRAMEBUFFER
     picogame_framebuffer_obj_t *fbt =
-        mp_obj_is_type(args[ARG_display].u_obj, &picogame_framebuffer_type)
-        ? MP_OBJ_TO_PTR(args[ARG_display].u_obj) : NULL;
+        pg_fb_native(args[ARG_display].u_obj);
     busdisplay_busdisplay_obj_t *display = fbt ? NULL : pg_get_display(args[ARG_display].u_obj);
     #else
     busdisplay_busdisplay_obj_t *display = pg_get_display(args[ARG_display].u_obj);
