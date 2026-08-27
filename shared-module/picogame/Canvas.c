@@ -306,13 +306,6 @@ void picogame_canvas_line(picogame_canvas_obj_t *cv, int x0, int y0, int x1, int
 
 // Clamp a row span to the surface and word-fill it (the span-pass idiom shared by the filled
 // shapes; the per-pixel put() loops it replaced clipped and indexed every pixel).
-static inline int64_t edge_slope(int32_t dx, int32_t dy) {
-    if (dx >= -32768 && dx <= 32767) {
-        return (int32_t)(dx << 16) / dy;
-    }
-    return ((int64_t)dx << 16) / dy;
-}
-
 static void span565(picogame_canvas_obj_t *cv, int y, int xs, int xe, uint16_t color) {
     if (y < 0 || y >= cv->h) {
         return;
