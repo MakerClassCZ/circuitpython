@@ -969,8 +969,310 @@ MP_DEFINE_CONST_OBJ_TYPE(picogame_display_type, MP_QSTR_Display, MP_TYPE_FLAG_NO
 MP_DEFINE_CONST_OBJ_TYPE(picogame_framebuffer_type, MP_QSTR_Framebuffer, MP_TYPE_FLAG_NONE, make_new, pg_stub_make_new);
 #endif
 
+// ===== FAT-XIP: map a CONTIGUOUS file on the internal-flash CIRCUITPY drive =====
+// Ordinary files copied onto CIRCUITPY are read 0-copy through the XIP window when they occupy
+// ONE contiguous cluster run (issue #11198, tannewt's suggestion). Contiguity is checked per
+// call via the FatFs FASTSEEK cluster-link map (FF_USE_FASTSEEK=1 already in CP; no ff.c change):
+// f_lseek(CREATE_LINKMAP) with a 4-entry table fills [4, nclusters, start, 0] for a one-run file
+// and reports FR_NOT_ENOUGH_CORE otherwise. Fragmented files raise OSError - the caller falls
+// back (read into RAM / /rom / streaming). Only the CIRCUITPY drive on the port's memory-mapped
+// internal flash qualifies (SD and other mounts raise ENOTSUP); the port supplies the block ->
+// address mapping. Rewriting or deleting a mapped file while a Bitmap uses it shows garbage
+// (never a fault): treat mapped assets as read-only for the game's lifetime.
+#if CIRCUITPY_PICOGAME_XIP_MAP
+#include "extmod/vfs_fat.h"
+#include "supervisor/filesystem.h"
+#include "supervisor/flash.h"
+#include "lib/oofatfs/ff.h"
+
+//| def xip_map(path: str) -> memoryview:
+//|     """A read-only memoryview over the flash bytes of `path` - 0 RAM, 0 copy - for a file on
+//|     the internal-flash CIRCUITPY drive that occupies one contiguous run of clusters. Give it
+//|     to ``Bitmap`` (PAL8/RGB565, slicing stays 0-copy). Raises OSError(ENOENT) if missing,
+//|     OSError(EOPNOTSUPP) if not on internal flash, OSError(EINVAL) if empty, and OSError(EIO)
+//|     with "fragmented" if the file is not one run - then load it another way (a smaller file
+//|     copied onto a drive with free space usually lands contiguous)."""
+//|     ...
+static mp_obj_t picogame_xip_map(mp_obj_t path_in) {
+    const char *path = mp_obj_str_get_str(path_in);
+    const char *under = NULL;
+    fs_user_mount_t *vfs = filesystem_for_path(path, &under);
+    if (vfs == NULL) {
+        mp_raise_OSError(MP_ENOENT);
+    }
+    if (vfs != filesystem_circuitpy()) {
+        mp_raise_OSError(MP_EOPNOTSUPP);           // SD card / other mount: not memory-mapped
+    }
+    FIL fp;
+    if (f_open(&vfs->fatfs, &fp, under, FA_READ) != FR_OK) {
+        mp_raise_OSError(MP_ENOENT);
+    }
+    DWORD tbl[4];
+    tbl[0] = 4;
+    fp.cltbl = tbl;
+    FRESULT res = f_lseek(&fp, CREATE_LINKMAP);
+    fp.cltbl = NULL;
+    FSIZE_t size = f_size(&fp);
+    DWORD start = fp.obj.sclust;
+    WORD csize = vfs->fatfs.csize;
+    DWORD database = vfs->fatfs.database;
+    f_close(&fp);
+    if (res == FR_NOT_ENOUGH_CORE) {
+        mp_raise_msg(&mp_type_OSError, MP_ERROR_TEXT("fragmented"));
+    }
+    if (res != FR_OK) {
+        mp_raise_OSError(MP_EIO);
+    }
+    if (size == 0 || tbl[0] != 4 || start < 2) {
+        mp_raise_OSError(MP_EINVAL);            // empty file (no clusters)
+    }
+    if (size > (FSIZE_t)tbl[1] * csize * FF_MIN_SS) {
+        mp_raise_OSError(MP_EIO);               // dir-entry size exceeds the run: corrupt
+    }
+    // Sector of the first cluster, then the port maps drive block -> XIP address. The FatFs
+    // volume starts at PART1_START_BLOCK (the supervisor's fake MBR occupies block 0), so the
+    // sector number IS the drive block number here.
+    DWORD sect = database + (start - 2) * csize;
+    supervisor_flash_flush();                   // drain the RAM sector cache: raw XIP must see it
+    const uint8_t *addr = supervisor_flash_xip_address(sect);
+    if (addr == NULL) {
+        mp_raise_OSError(MP_EOPNOTSUPP);
+    }
+    // read-only view (no MP_OBJ_ARRAY_TYPECODE_FLAG_RW): a stray write raises instead of being
+    // silently dropped on the XIP window
+    return mp_obj_new_memoryview('B', (size_t)size, (void *)addr);
+}
+static MP_DEFINE_CONST_FUN_OBJ_1(picogame_xip_map_obj, picogame_xip_map);
+#endif // CIRCUITPY_PICOGAME_XIP_MAP
+// ===== end FAT-XIP =====
+
+// ===== FAT layout PROBE (bench-only: make ... PICOGAME_FAT_PROBE=1) =====
+// Measures how CIRCUITPY files are laid out on the FAT - the feasibility input for a
+// "contiguous FAT file used directly via XIP" asset path (issue #11198). Uses the FatFs
+// FASTSEEK cluster-link-map: f_lseek(CREATE_LINKMAP) with a small table reports whether the
+// file is ONE run (table fills: [4, ncl, start, 0]) or needs more entries (FR_NOT_ENOUGH_CORE,
+// tbl[0] = entries needed = 2 + 2*fragments). No FatFs change, no writes.
+#if PICOGAME_FAT_PROBE
+#include <string.h>
+#include "extmod/vfs_fat.h"
+#include "supervisor/filesystem.h"
+#include "supervisor/shared/tick.h"
+#include "lib/oofatfs/ff.h"
+
+//| def fat_layout(path: str) -> Tuple[int, int, int, int, int]:
+//|     """(fragments, size, first_cluster, cluster_bytes, data_base_sector) for a file on a
+//|     FAT mount. fragments == 1 means the file is one contiguous cluster run."""
+//|     ...
+static mp_obj_t picogame_fat_layout(mp_obj_t path_in) {
+    const char *path = mp_obj_str_get_str(path_in);
+    const char *under = NULL;
+    fs_user_mount_t *vfs = filesystem_for_path(path, &under);
+    if (vfs == NULL) {
+        mp_raise_OSError(MP_ENOENT);
+    }
+    FIL fp;
+    FRESULT res = f_open(&vfs->fatfs, &fp, under, FA_READ);
+    if (res != FR_OK) {
+        mp_raise_OSError(MP_ENOENT);
+    }
+    DWORD tbl[4];
+    tbl[0] = 4;
+    fp.cltbl = tbl;
+    res = f_lseek(&fp, CREATE_LINKMAP);
+    mp_int_t frags;
+    if (res == FR_OK || res == FR_NOT_ENOUGH_CORE) {
+        frags = (tbl[0] - 2) / 2;                 // OK: 4 -> 1 run, 2 -> empty; else entries needed
+    } else {
+        fp.cltbl = NULL;
+        f_close(&fp);
+        mp_raise_OSError(MP_EIO);
+    }
+    mp_obj_t items[5] = {
+        mp_obj_new_int(frags),
+        mp_obj_new_int_from_uint(f_size(&fp)),
+        mp_obj_new_int_from_uint(fp.obj.sclust),
+        mp_obj_new_int(vfs->fatfs.csize * 512),
+        mp_obj_new_int_from_uint(vfs->fatfs.database),
+    };
+    fp.cltbl = NULL;
+    f_close(&fp);
+    return mp_obj_new_tuple(5, items);
+}
+static MP_DEFINE_CONST_FUN_OBJ_1(picogame_fat_layout_obj, picogame_fat_layout);
+
+//| def fat_max_free_run(path: str = "/") -> int:
+//|     """Largest run of contiguous FREE clusters on the FAT mount holding `path`, in bytes
+//|     (binary search via f_expand(opt=0), which only probes - nothing is allocated). This is the
+//|     biggest file repack() can produce right now."""
+//|     ...
+static mp_obj_t picogame_fat_max_free_run(size_t n_args, const mp_obj_t *args) {
+    const char *path = n_args > 0 ? mp_obj_str_get_str(args[0]) : "/";
+    const char *under = NULL;
+    fs_user_mount_t *vfs = filesystem_for_path(path, &under);
+    if (vfs == NULL) {
+        mp_raise_OSError(MP_ENOENT);
+    }
+    if (!filesystem_is_writable_by_python(vfs)) {
+        mp_raise_OSError(MP_EROFS);   // f_expand needs FA_WRITE on a scratch file
+    }
+    // Scratch file: created empty, probed with opt=0 (only moves fs->last_clst), deleted.
+    FIL fp;
+    FRESULT res = f_open(&vfs->fatfs, &fp, "/.pg_probe.tmp", FA_CREATE_ALWAYS | FA_WRITE);
+    if (res != FR_OK) {
+        mp_raise_OSError(MP_EIO);
+    }
+    uint32_t cl = vfs->fatfs.csize * 512;
+    uint32_t lo = 0, hi = vfs->fatfs.free_clst;   // free_clst valid after f_getfree; may be ~0
+    if (hi == 0xFFFFFFFF || hi > vfs->fatfs.n_fatent) {
+        DWORD nfree;
+        f_getfree(&vfs->fatfs, &nfree);
+        hi = nfree;
+    }
+    while (lo < hi) {
+        uint32_t mid = (lo + hi + 1) / 2;
+        FRESULT r = f_expand(&fp, (FSIZE_t)mid * cl, 0);
+        if (r == FR_OK) {
+            lo = mid;
+        } else if (r == FR_DENIED) {
+            hi = mid - 1;
+        } else {
+            break;
+        }
+    }
+    f_close(&fp);
+    f_unlink(&vfs->fatfs, "/.pg_probe.tmp");
+    return mp_obj_new_int_from_uint(lo * cl);
+}
+static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(picogame_fat_max_free_run_obj, 0, 1, picogame_fat_max_free_run);
+
+//| def repack(path: str) -> int:
+//|     """Rewrite `path` as ONE contiguous cluster run (a copy into a fresh f_expand-allocated
+//|     file, verified, then renamed over the original). Returns the fragment count BEFORE
+//|     (1 = was already contiguous, nothing written). Needs the drive writable by Python
+//|     (boot.py, or storage.remount('/', readonly=False) with the host drive read-only) and a free
+//|     run >= the file size (OSError(ENOSPC) otherwise, nothing changed)."""
+//|     ...
+static mp_obj_t picogame_repack(mp_obj_t path_in) {
+    const char *path = mp_obj_str_get_str(path_in);
+    const char *under = NULL;
+    fs_user_mount_t *vfs = filesystem_for_path(path, &under);
+    if (vfs == NULL) {
+        mp_raise_OSError(MP_ENOENT);
+    }
+    if (!filesystem_is_writable_by_python(vfs)) {
+        mp_raise_OSError(MP_EROFS);
+    }
+    FATFS *fs = &vfs->fatfs;
+    // 1) fragment count of the original (same CLMT trick as fat_layout)
+    FIL src;
+    if (f_open(fs, &src, under, FA_READ) != FR_OK) {
+        mp_raise_OSError(MP_ENOENT);
+    }
+    DWORD tbl[4];
+    tbl[0] = 4;
+    src.cltbl = tbl;
+    FRESULT res = f_lseek(&src, CREATE_LINKMAP);
+    src.cltbl = NULL;
+    mp_int_t frags = (res == FR_OK || res == FR_NOT_ENOUGH_CORE) ? (mp_int_t)((tbl[0] - 2) / 2) : -1;
+    FSIZE_t size = f_size(&src);
+    if (frags <= 1 || size == 0) {
+        f_close(&src);
+        return mp_obj_new_int(frags);            // already contiguous (or empty): no writes
+    }
+    f_lseek(&src, 0);
+    // 2) temp file next to the original: "<dir>/.pg_repack.tmp"
+    char tmp[FF_MAX_LFN + 16];
+    const char *slash = strrchr(under, '/');
+    size_t dirlen = slash ? (size_t)(slash - under) : 0;
+    if (dirlen + 16 >= sizeof(tmp)) {
+        f_close(&src);
+        mp_raise_OSError(MP_EINVAL);
+    }
+    memcpy(tmp, under, dirlen);
+    memcpy(tmp + dirlen, "/.pg_repack.tmp", 16);
+    FIL dst;
+    res = f_open(fs, &dst, tmp, FA_CREATE_ALWAYS | FA_WRITE);
+    if (res != FR_OK) {
+        f_close(&src);
+        mp_raise_OSError(MP_EIO);
+    }
+    res = f_expand(&dst, size, 1);               // allocate the whole run NOW
+    if (res != FR_OK) {
+        f_close(&dst);
+        f_unlink(fs, tmp);
+        f_close(&src);
+        mp_raise_OSError(res == FR_DENIED ? MP_ENOSPC : MP_EIO);
+    }
+    // 3) copy in sector-sized chunks, then verify by re-reading both
+    uint8_t *buf = m_new(uint8_t, 4096);
+    UINT br, bw;
+    FSIZE_t done = 0;
+    while (done < size) {
+        if (f_read(&src, buf, 4096, &br) != FR_OK || br == 0) {
+            break;
+        }
+        if (f_write(&dst, buf, br, &bw) != FR_OK || bw != br) {
+            break;
+        }
+        done += br;
+        RUN_BACKGROUND_TASKS;
+    }
+    bool ok = (done == size) && (f_sync(&dst) == FR_OK);
+    if (ok) {
+        // verify: dst must be ONE run and byte-identical
+        f_lseek(&dst, 0);
+        DWORD t2[4];
+        t2[0] = 4;
+        dst.cltbl = t2;
+        FRESULT r2 = f_lseek(&dst, CREATE_LINKMAP);
+        dst.cltbl = NULL;
+        ok = (r2 == FR_OK && t2[0] == 4);
+        f_lseek(&dst, 0);
+        f_lseek(&src, 0);
+        uint8_t *buf2 = m_new(uint8_t, 4096);
+        FSIZE_t left = size;
+        while (ok && left > 0) {
+            UINT b1, b2;
+            if (f_read(&src, buf, 4096, &b1) != FR_OK || f_read(&dst, buf2, 4096, &b2) != FR_OK || b1 != b2 || b1 == 0) {
+                ok = false;
+                break;
+            }
+            if (memcmp(buf, buf2, b1) != 0) {
+                ok = false;
+                break;
+            }
+            left -= b1;
+        }
+        m_del(uint8_t, buf2, 4096);
+    }
+    f_close(&dst);
+    f_close(&src);
+    m_del(uint8_t, buf, 4096);
+    if (!ok) {
+        f_unlink(fs, tmp);
+        mp_raise_OSError(MP_EIO);
+    }
+    // 4) swap: unlink original, rename temp over it (the only non-atomic window; a power loss
+    //    here leaves .pg_repack.tmp with the full contents next to a missing original)
+    if (f_unlink(fs, under) != FR_OK || f_rename(fs, tmp, under) != FR_OK) {
+        mp_raise_OSError(MP_EIO);
+    }
+    return mp_obj_new_int(frags);
+}
+static MP_DEFINE_CONST_FUN_OBJ_1(picogame_repack_obj, picogame_repack);
+#endif // PICOGAME_FAT_PROBE
+// ===== end FAT layout PROBE =====
+
 static const mp_rom_map_elem_t picogame_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR___name__), MP_ROM_QSTR(MP_QSTR_picogame) },
+    #if CIRCUITPY_PICOGAME_XIP_MAP
+    { MP_ROM_QSTR(MP_QSTR_xip_map), MP_ROM_PTR(&picogame_xip_map_obj) },
+    #endif
+    #if PICOGAME_FAT_PROBE
+    { MP_ROM_QSTR(MP_QSTR_fat_layout), MP_ROM_PTR(&picogame_fat_layout_obj) },
+    { MP_ROM_QSTR(MP_QSTR_fat_max_free_run), MP_ROM_PTR(&picogame_fat_max_free_run_obj) },
+    { MP_ROM_QSTR(MP_QSTR_repack), MP_ROM_PTR(&picogame_repack_obj) },
+    #endif
     { MP_ROM_QSTR(MP_QSTR_Bitmap), MP_ROM_PTR(&picogame_bitmap_type) },
     { MP_ROM_QSTR(MP_QSTR_Sprite), MP_ROM_PTR(&picogame_sprite_type) },
     { MP_ROM_QSTR(MP_QSTR_Display), MP_ROM_PTR(&picogame_display_type) },

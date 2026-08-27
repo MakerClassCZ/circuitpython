@@ -149,3 +149,8 @@ mp_uint_t supervisor_flash_write_blocks(const uint8_t *src, uint32_t lba, uint32
 
 void supervisor_flash_release_cache(void) {
 }
+
+// Memory-mapped (XIP) address of a CIRCUITPY drive block - the picogame xip_map hook.
+const uint8_t *port_internal_flash_xip_address(uint32_t block) {
+    return (const uint8_t *)(XIP_BASE + CIRCUITPY_CIRCUITPY_DRIVE_START_ADDR + block * FILESYSTEM_BLOCK_SIZE);
+}
