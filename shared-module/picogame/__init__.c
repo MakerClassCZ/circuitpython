@@ -507,6 +507,9 @@ static int32_t pg_sin_q15(int deg) {
     }
     return -pg_sin_q15_quad[360 - deg];
 }
+// Fork-join hook (see __init__.h). NULL until a port installs its splitter.
+bool (*picogame_par_split)(picogame_job_t fn, void *arg, int lo, int hi) = NULL;
+
 static int32_t pg_cos_q15(int deg) {
     return pg_sin_q15(deg + 90);
 }
@@ -555,7 +558,7 @@ void picogame_road_edges(int16_t *rl, int16_t *rr, const int32_t *hw_q16, int n,
 
 // Forward-transform a w*h rect's 4 corners through (integer pivot, 8.8 scale, Q15 rotation) and
 // return the screen-space AABB. INTEGER (Q16) - measured ~40x faster than the old float version on
-// the M0+ flagship (soft-float), and faster on every target (measured affine_q16 vs affine_float).
+// the M0+ flagship (soft-float), and faster on every target (picobench affine_q16 vs affine_float).
 // Runs once per rotated sprite (not per pixel). Each corner is FLOORED (arithmetic >>23 = /(256*32768)),
 // so the returned box is <= the true min and the callers' +1/+2 keep the box CONTAINING the sprite
 // (the affine blitter clips per pixel anyway, so a >=1px-too-large box only repaints, never clips).
@@ -889,7 +892,7 @@ mp_obj_t picogame_blit_strip_layers(
             }
         } else if (kind == PICOGAME_KIND_TRIANGLES) {
             // Retained screen-space triangle batch: pure C per strip (no Python callback,
-            // so this path needs no Python re-entry mid-compose). Cheap band
+            // so unlike StripDraw this path stays core1/async composable). Cheap band
             // reject vs THIS strip, then the Canvas rasteriser through a stack view over
             // the strip buffer. Screen-space by design: the view offset is not applied.
             picogame_triangles_obj_t *t = MP_OBJ_TO_PTR(items[i]);
@@ -1188,12 +1191,27 @@ static void picogame_fb_to_rgb332_copy(uint8_t *dst, const uint16_t *src, int n)
     }
 }
 
-// Publish-copy context for one framebuffer region: just what fb_publish_band needs.
+// Second-core compose strip for the framebuffer band split (E10): set by the bindings'
+// Framebuffer constructor when the static SRAM strip fits, else NULL (= never split).
+uint16_t *picogame_fb_scratch_alt = NULL;
+
+// One framebuffer compose band-range: everything fb_bands_job needs, by value. `mid` is
+// par_split's split point (lo + (hi-lo)/2): the half starting there runs on core1 and
+// must use the ALT scratch - selecting by `lo >= mid` needs no core-id and stays portable.
 typedef struct {
     uint16_t *fb;
     int fb_stride, fmt;
-    int x0, region_w;
+    uint16_t *scr0, *scr1;
+    int scratch_rows;
+    mp_obj_t *items;
+    uint8_t *kinds;
+    size_t n;
+    int x0, y0, y1, region_w;
     bool full_width;
+    uint16_t background;
+    int ox, oy;
+    int mid;
+    int nbands;
 } fb_bands_arg_t;
 
 // Publish one FINISHED band from a scratch strip into the fb (wire/native/RGB332,
@@ -1233,6 +1251,28 @@ static void fb_publish_band(const fb_bands_arg_t *a, uint16_t *scratch, int by, 
     }
 }
 
+// Compose+publish one core's share of the bands - the fork-join kernel for the E10 split.
+// Only offered to par_split when the scene has NO StripDraw (a Python callback cannot run
+// on core1), so the blit chain is pure C and the layers are read-only during the join.
+// The [lo,hi) range only tells us WHICH half we are (lo >= mid = core1); each core then
+// walks INTERLEAVED bands (core0 even, core1 odd) so the two publish streams advance down
+// the screen together - beam-sympathetic like the serial loop, instead of core1 slamming
+// the bottom half early (that showed as recurring band-boundary "teeth" on moving edges,
+// parked in one screen region by the compose-vs-scanout beat).
+static void fb_bands_job(void *argp, int lo, int hi) {
+    fb_bands_arg_t *a = argp;
+    (void)hi;
+    int parity = (lo >= a->mid) ? 1 : 0;
+    uint16_t *scratch = parity ? a->scr1 : a->scr0;
+    for (int b = parity; b < a->nbands; b += 2) {
+        int by = a->y0 + b * a->scratch_rows;
+        int bh = (a->y1 - by) < a->scratch_rows ? (a->y1 - by) : a->scratch_rows;
+        picogame_blit_strip_layers(scratch, a->region_w, by, bh, a->x0,
+            a->items, a->kinds, a->n, a->background, a->ox, a->oy);
+        fb_publish_band(a, scratch, by, bh);
+    }
+}
+
 mp_obj_t picogame_render_framebuffer(
     uint16_t *fb, int fb_stride, int fb_h, int fmt,
     uint16_t *scratch, int scratch_rows,
@@ -1268,10 +1308,32 @@ mp_obj_t picogame_render_framebuffer(
         // Full-width band: rows are contiguous in BOTH scratch and fb, so the whole band publishes in
         // one pass with 4-byte-aligned pointers (fb_stride even). Partial-width rows are strided.
         fb_bands_arg_t a = {
-            fb, fb_stride, fmt, x0, region_w,
-            (x0 == 0 && region_w == fb_stride)
+            fb, fb_stride, fmt, scratch, picogame_fb_scratch_alt, scratch_rows,
+            items, kinds, n, x0, y0, y1, region_w,
+            (x0 == 0 && region_w == fb_stride), background, ox, oy, 0, 0
         };
         int nbands = (y1 - y0 + scratch_rows - 1) / scratch_rows;
+        a.nbands = nbands;
+        // E10 SPLIT: bands are independent (own scratch rows, own fb rows), so with the
+        // core1 fork-join enabled (pg.core1(True)) the band range runs on BOTH cores -
+        // IF a second scratch strip exists and the scene has no StripDraw (its Python
+        // callback cannot run on core1; those frames take the serial loop below).
+        if (picogame_par_split != NULL && a.scr1 != NULL && nbands >= 2) {
+            bool has_py = false;
+            for (size_t i = 0; i < n; i++) {
+                if ((kinds[i] & PICOGAME_KIND_MASK) == PICOGAME_KIND_STRIPDRAW) {
+                    has_py = true;
+                    break;
+                }
+            }
+            if (!has_py) {
+                a.mid = nbands >> 1;             // par_split's split point for lo=0
+                if (picogame_par_split(fb_bands_job, &a, 0, nbands)) {
+                    return MP_OBJ_NULL;
+                }
+            }
+        }
+        a.mid = nbands + 1;                      // serial: core0 scratch for every band
         for (int b = 0; b < nbands; b++) {
             int by = y0 + b * scratch_rows;
             int bh = (y1 - by) < scratch_rows ? (y1 - by) : scratch_rows;

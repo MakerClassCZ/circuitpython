@@ -10,8 +10,8 @@
 // ADDRESS, and (ADD_RAW) both accumulators advance by their full-precision steps on the
 // same pop. That replaces ~8 shift/mask/mul/add ops per pixel with one SIO read.
 //
-// Per-CORE hardware: each core has its own interp0, so this stays safe even if rows are
-// ever split across cores (each configures its own). The engine claims no SDK
+// Per-CORE hardware: core0 and core1 each have their own interp0, so this is safe under
+// the picogame core1 row split (each core configures its own). The engine claims no SDK
 // lane locks: CircuitPython core does not use the interpolators, and the config is
 // rewritten per row call anyway.
 //
