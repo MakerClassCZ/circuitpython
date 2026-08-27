@@ -42,15 +42,23 @@ static mp_obj_t scene_resolve_target(mp_obj_t disp, bool *fast, bool *fb_target)
     *fast = false;
     *fb_target = false;
     #if CIRCUITPY_PICOGAME_FAST_DISPLAY
-    if (mp_obj_is_type(disp, &picogame_display_type)) {
-        *fast = true;
-        return disp;
+    {
+        // Accept subclasses too (same as the busdisplay path below): resolve to the
+        // native base object, which the C renderer can safely cast.
+        mp_obj_t ndisp = mp_obj_cast_to_native_base(disp, &picogame_display_type);
+        if (ndisp != MP_OBJ_NULL && mp_obj_is_type(ndisp, &picogame_display_type)) {
+            *fast = true;
+            return ndisp;
+        }
     }
     #endif
     #if CIRCUITPY_PICOGAME_FRAMEBUFFER
-    if (mp_obj_is_type(disp, &picogame_framebuffer_type)) {
-        *fb_target = true;   // refresh() composites dirty rects straight into its RAM buffer
-        return disp;
+    {
+        mp_obj_t nfb = mp_obj_cast_to_native_base(disp, &picogame_framebuffer_type);
+        if (nfb != MP_OBJ_NULL && mp_obj_is_type(nfb, &picogame_framebuffer_type)) {
+            *fb_target = true;   // refresh() composites dirty rects straight into its RAM buffer
+            return nfb;
+        }
     }
     #endif
     // Plain busdisplay: accept a subclass by casting to its native base; the portable
