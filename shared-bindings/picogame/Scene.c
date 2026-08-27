@@ -71,8 +71,8 @@ static mp_obj_t scene_resolve_target(mp_obj_t disp, bool *fast, bool *fb_target)
 //|     def __init__(
 //|         self,
 //|         display: Union[Display, busdisplay.BusDisplay, Framebuffer],
-//|         buffer_a: Optional[WriteableBuffer],
-//|         buffer_b: Optional[WriteableBuffer],
+//|         buffer_a: Optional[WriteableBuffer] = None,
+//|         buffer_b: Optional[WriteableBuffer] = None,
 //|         *,
 //|         background: int = 0,
 //|         top: int = 0,
@@ -81,10 +81,12 @@ static mp_obj_t scene_resolve_target(mp_obj_t disp, bool *fast, bool *fb_target)
 //|         right: int = 0,
 //|     ) -> None:
 //|         """:param display: the render target
-//|         :param ~circuitpython_typing.WriteableBuffer buffer_a: a strip buffer of at
-//|             least ``display.width * STRIP_H * 2`` bytes. Two buffers let the next
-//|             strip be composited while the previous one is being sent. On a
-//|             `Framebuffer` target there are no strips and both may be `None`.
+//|         :param ~circuitpython_typing.WriteableBuffer buffer_a: a strip buffer,
+//|             typically ``display.width * STRIP_H * 2`` bytes. Its size sets the
+//|             strip height: each strip is ``size // (display.width * 2)`` rows. Two
+//|             buffers let the next strip be composited while the previous one is
+//|             being sent. On a `Framebuffer` target there are no strips and the
+//|             buffers are unused; both default to `None`.
 //|         :param ~circuitpython_typing.WriteableBuffer buffer_b: the second strip
 //|             buffer, sized like ``buffer_a``
 //|         :param int background: color that exposed areas are cleared to
@@ -103,8 +105,8 @@ static mp_obj_t picogame_scene_make_new(const mp_obj_type_t *type, size_t n_args
            ARG_top, ARG_bottom, ARG_left, ARG_right };
     static const mp_arg_t allowed_args[] = {
         { MP_QSTR_display, MP_ARG_REQUIRED | MP_ARG_OBJ },
-        { MP_QSTR_buffer_a, MP_ARG_REQUIRED | MP_ARG_OBJ },
-        { MP_QSTR_buffer_b, MP_ARG_REQUIRED | MP_ARG_OBJ },
+        { MP_QSTR_buffer_a, MP_ARG_OBJ, {.u_rom_obj = MP_ROM_NONE} },
+        { MP_QSTR_buffer_b, MP_ARG_OBJ, {.u_rom_obj = MP_ROM_NONE} },
         { MP_QSTR_background, MP_ARG_INT | MP_ARG_KW_ONLY, {.u_int = 0} },
         { MP_QSTR_top, MP_ARG_INT | MP_ARG_KW_ONLY, {.u_int = 0} },      // reserved border insets:
         { MP_QSTR_bottom, MP_ARG_INT | MP_ARG_KW_ONLY, {.u_int = 0} },   // the scene renders only the

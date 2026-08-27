@@ -183,13 +183,17 @@ MP_PROPERTY_GETSET(sd_always_dirty_obj, (mp_obj_t)&sd_get_always_dirty_obj, (mp_
 //|
 //|         With no arguments the whole layer repaints. To repaint one region, pass
 //|         all four values as a rectangle in the view-local coordinates the draw
-//|         callback uses; an incomplete rectangle repaints the whole layer. Repeated
-//|         calls accumulate, and the rectangle is clamped to the layer."""
+//|         callback uses; passing only some of them raises :py:class:`ValueError`.
+//|         Repeated calls accumulate, and the rectangle is clamped to the layer."""
 //|         ...
 //|
 //|
 static mp_obj_t sd_invalidate(size_t n_args, const mp_obj_t *args) {
     picogame_stripdraw_obj_t *self = MP_OBJ_TO_PTR(args[0]);
+    if (n_args != 1 && n_args != 5) {
+        // A partial rectangle is a bug, not a request for "everything".
+        mp_arg_error_invalid(MP_QSTR_rect);
+    }
     if (n_args >= 5) {                       // (x, y, w, h) in view-local coords -> clamped scene rect
         int x1 = self->x + mp_obj_get_int(args[1]);
         int y1 = self->y + mp_obj_get_int(args[2]);

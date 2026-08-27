@@ -91,13 +91,8 @@ static busdisplay_busdisplay_obj_t *pg_get_display(mp_obj_t obj) {
 //|
 //| A scene targets a :py:class:`~busdisplay.BusDisplay`, an accelerated
 //| :py:class:`Display` or a RAM :py:class:`Framebuffer`. picogame drives the
-//| display itself: set ``display.auto_refresh = False``, and do not use
-//| displayio groups on the same display at the same time.
-//|
-//| Unless stated otherwise, color integers are display transfer-order RGB565
-//| values as returned by :py:func:`rgb565`. Render rectangles include
-//| ``(x0, y0)`` and exclude ``(x1, y1)``; collision rectangles use inclusive
-//| edges as documented by :py:func:`collide`.
+//| display itself, so it requires ``display.auto_refresh = False`` and cannot
+//| show displayio groups on the same display at the same time.
 //|
 //| .. note::
 //|    This module is the engine's rendering and compute core and is fully
@@ -146,8 +141,9 @@ static busdisplay_busdisplay_obj_t *pg_get_display(mp_obj_t obj) {
 //| """8-bit paletted bitmap format."""
 //|
 //| STRIP_H: int
-//| """Default render-strip height in rows for this build. A `Scene` strip
-//| buffer is ``display.width * STRIP_H * 2`` bytes."""
+//| """Recommended render-strip height in rows for this build. Sizing a `Scene`
+//| strip buffer as ``display.width * STRIP_H * 2`` bytes yields strips this
+//| tall."""
 //|
 //| FPU: int
 //| """``1`` when `project` uses hardware floating point (its buffers are
@@ -168,7 +164,8 @@ static busdisplay_busdisplay_obj_t *pg_get_display(mp_obj_t obj) {
 //|
 //|
 //| def rgb565(r: int, g: int, b: int) -> int:
-//|     """Build a display wire-order RGB565 color from 8-bit components."""
+//|     """Build an RGB565 color in the display's transfer byte order from 8-bit
+//|     components. Every color integer in this module is such a value."""
 //|     ...
 static mp_obj_t picogame_rgb565(mp_obj_t r_in, mp_obj_t g_in, mp_obj_t b_in) {
     int r = mp_obj_get_int(r_in) & 0xff;
@@ -644,10 +641,10 @@ uint8_t picogame_kind_of(mp_obj_t o) {
 }
 
 static mp_obj_t picogame_render_fun(size_t n_args, const mp_obj_t *pos_args, mp_map_t *kw_args) {
-    enum { ARG_display, ARG_sprites, ARG_buffer, ARG_x0, ARG_y0, ARG_x1, ARG_y1, ARG_background };
+    enum { ARG_display, ARG_layers, ARG_buffer, ARG_x0, ARG_y0, ARG_x1, ARG_y1, ARG_background };
     static const mp_arg_t allowed_args[] = {
         { MP_QSTR_display, MP_ARG_REQUIRED | MP_ARG_OBJ },
-        { MP_QSTR_sprites, MP_ARG_REQUIRED | MP_ARG_OBJ },
+        { MP_QSTR_layers, MP_ARG_REQUIRED | MP_ARG_OBJ },
         { MP_QSTR_buffer, MP_ARG_REQUIRED | MP_ARG_OBJ },
         { MP_QSTR_x0, MP_ARG_REQUIRED | MP_ARG_INT },
         { MP_QSTR_y0, MP_ARG_REQUIRED | MP_ARG_INT },
@@ -672,7 +669,7 @@ static mp_obj_t picogame_render_fun(size_t n_args, const mp_obj_t *pos_args, mp_
 
     size_t n = 0;
     mp_obj_t *items;
-    mp_obj_get_array(args[ARG_sprites].u_obj, &n, &items);
+    mp_obj_get_array(args[ARG_layers].u_obj, &n, &items);
 
     // Classify items into layer kinds. All-Sprite lists stay on the NULL-kinds fast path (no alloc -
     // the common case). Any non-Sprite layer (StripDraw/Canvas/Tilemap/Particles) builds a small kinds
