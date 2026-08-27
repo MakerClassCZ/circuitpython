@@ -26,71 +26,53 @@
 #include "shared-module/picogame/Sprite.h"
 
 #if CIRCUITPY_PICOGAME_FRAMEBUFFER
-// SRAM compose strips, port-allocated on first use (see the scratch comment in make_new).
-// port_malloc(dma_capable=true) is the point: on a PSRAM board the Python heap lives in PSRAM,
-// but this asks the port for INTERNAL SRAM. Two strips - the second is for the core1 band split,
-// where each core composes into its own. They are sized to the widest Framebuffer built so far
-// and kept (the pointers survive a soft reload, so the next run REUSES them instead of allocating
-// again); a board that never builds a Framebuffer pays nothing, which a .bss array could not do.
-static uint16_t *picogame_fb_scratch_sram;
-static uint16_t *picogame_fb_scratch_sram2;
-static size_t picogame_fb_scratch_px;        // pixels per strip currently allocated (0 = none)
-extern uint16_t *picogame_fb_scratch_alt;    // shared-module split hook (NULL = never split)
-
-// The strips for THIS compose: picogame.render() asks at use time, because a Framebuffer built
-// later (wider) may have grown - and freed - the ones an earlier object saw. NULL = none yet.
-uint16_t *picogame_fb_scratch_use(void) {
-    if (picogame_fb_scratch_sram != NULL) {
-        picogame_fb_scratch_alt = picogame_fb_scratch_sram2;
-    }
-    return picogame_fb_scratch_sram;
-}
-
 // ---------------------------------------------------------------------------
 // Framebuffer  (a RAM render target used in place of a BusDisplay; scanout-buffer
 // platforms - WASM playground, desktop sim, FruitJam DVI/HSTX)
 // ---------------------------------------------------------------------------
 //| class Framebuffer:
-//|     """A RAM framebuffer render target that a Scene or :py:func:`render` can draw
-//|     into instead of a BusDisplay. ``buffer`` must be a writable buffer of at least
-//|     ``width*height*2`` bytes (``width*height`` for ``rgb332=True``); the caller owns it
-//|     (a ``bytearray`` in the browser, the DVI scanout buffer on FruitJam). By default the
-//|     pixels are wire-order RGB565 (the engine's internal format); ``native_rgb565=True``
-//|     byte-swaps each finished region to NATIVE RGB565 - the format 16-bit picodvi /
-//|     canvas scanout targets expect; ``rgb332=True`` quantizes each finished region to
-//|     RGB332 bytes - the format of 8-bit picodvi scanout (FruitJam 640x480, which the
-//|     hardware only offers at 8bpp). Assets, palettes and ``rgb565()`` stay wire-order
-//|     RGB565 throughout regardless of the output format."""
+//|     """A RAM framebuffer render target that a `Scene` or :py:func:`render` can
+//|     draw into instead of a :py:class:`~busdisplay.BusDisplay`, for example the
+//|     scanout buffer of a :py:class:`picodvi.Framebuffer`.
 //|
-//|     def __init__(self, buffer: WriteableBuffer, width: int, height: int, *,
-//|                  native_rgb565: bool = False, rgb332: bool = False) -> None: ...
+//|     Constructing it raises :py:class:`NotImplementedError` when
+//|     :py:data:`FRAMEBUFFER_SUPPORTED` is `False`."""
+//|
+//|     def __init__(
+//|         self,
+//|         buffer: WriteableBuffer,
+//|         width: int,
+//|         height: int,
+//|         *,
+//|         native_rgb565: bool = False,
+//|         rgb332: bool = False,
+//|     ) -> None:
+//|         """:param ~circuitpython_typing.WriteableBuffer buffer: caller-owned target
+//|             buffer of at least ``width * height * 2`` bytes, or ``width * height``
+//|             bytes with ``rgb332=True``
+//|         :param int width: target width in pixels
+//|         :param int height: target height in pixels
+//|         :param bool native_rgb565: fill the buffer with native-endian RGB565, the
+//|             format 16-bit scanout targets expect. By default the buffer holds
+//|             transfer-order RGB565.
+//|         :param bool rgb332: fill the buffer with 8-bit RGB332, the format of 8-bit
+//|             scanout targets
+//|
+//|         ``native_rgb565`` and ``rgb332`` cannot both be true. Bitmaps, palettes and
+//|         :py:func:`rgb565` values stay transfer-order RGB565 regardless of the
+//|         output format."""
+//|         ...
 //|
 //|     width: int
+//|     """Target width in pixels. (read-only)"""
 //|     height: int
-//|     """Target size in pixels (read-only)."""
-// Grow (or first allocate) both strips to `px` pixels each. False = keep what we had.
-static bool picogame_fb_scratch_reserve(size_t px) {
-    if (picogame_fb_scratch_px >= px) {
-        return true;
-    }
-    uint16_t *a = port_malloc(px * 2u, true);    // true = must be internal SRAM, not PSRAM
-    if (a == NULL) {
-        return false;
-    }
-    uint16_t *b = port_malloc(px * 2u, true);
-    if (b == NULL) {
-        port_free(a);
-        return false;
-    }
-    if (picogame_fb_scratch_sram != NULL) {
-        port_free(picogame_fb_scratch_sram);
-        port_free(picogame_fb_scratch_sram2);
-    }
-    picogame_fb_scratch_sram = a;
-    picogame_fb_scratch_sram2 = b;
-    picogame_fb_scratch_px = px;
-    return true;
-}
+//|     """Target height in pixels. (read-only)"""
+//|
+//|
+// Static SRAM compose strip (see the scratch comment in make_new). 640*16*2 = 20 KB .bss,
+// only on CIRCUITPY_PICOGAME_FRAMEBUFFER builds (fb boards have the SRAM to spare).
+#define PICOGAME_FB_SCRATCH_MAX_W 640
+static uint16_t picogame_fb_scratch_sram[PICOGAME_FB_SCRATCH_MAX_W * PICOGAME_FB_SCRATCH_H];
 
 static mp_obj_t picogame_framebuffer_make_new(const mp_obj_type_t *type, size_t n_args,
     size_t n_kw, const mp_obj_t *all_args) {
@@ -135,9 +117,9 @@ static mp_obj_t picogame_framebuffer_make_new(const mp_obj_type_t *type, size_t 
     //
     // The scratch must be FAST memory: on a PSRAM-heap board (Fruit Jam) a heap bytearray
     // lands in external PSRAM and every compose write pays QSPI latency (measured 8.7 vs
-    // 64+ MB/s SRAM; a full-res StripDraw frame ballooned refresh to ~30-38 ms). One SRAM
-    // strip serves every Framebuffer (compose is synchronous); if the port cannot give us
-    // SRAM, fall back to a heap buffer - slower on PSRAM boards, but correct everywhere.
+    // 64+ MB/s SRAM; a full-res StripDraw frame ballooned refresh to ~30-38 ms). One static
+    // SRAM strip serves every Framebuffer (compose is synchronous) up to 640 px wide; wider
+    // targets fall back to the heap.
     self->scratch_buf = mp_const_none;
     self->scratch = NULL;
     self->scratch_rows = 0;
@@ -146,11 +128,9 @@ static mp_obj_t picogame_framebuffer_make_new(const mp_obj_type_t *type, size_t 
         if (rows > height) {
             rows = height;
         }
-        if (picogame_fb_scratch_reserve((size_t)width * (size_t)rows)) {
+        if (width <= PICOGAME_FB_SCRATCH_MAX_W) {
             self->scratch = picogame_fb_scratch_sram;
-            picogame_fb_scratch_alt = picogame_fb_scratch_sram2;
         } else {
-            picogame_fb_scratch_alt = NULL;      // no matching second strip -> never split bands
             mp_obj_t sb = mp_obj_new_bytearray_of_zeros((size_t)width * (size_t)rows * 2u);
             mp_buffer_info_t sbi;
             mp_get_buffer_raise(sb, &sbi, MP_BUFFER_WRITE);

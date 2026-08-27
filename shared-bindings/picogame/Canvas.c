@@ -12,9 +12,9 @@
 #include "shared-module/picogame/Canvas.h"
 
 //| class Canvas:
-//|     """A RAM drawing surface (any size) composited as a Scene layer. Draw
-//|     primitives into it; only redrawn areas repaint. Colors are wire-order
-//|     (use picogame.rgb565)."""
+//|     """A RAM drawing surface of any size, composited as a `Scene` layer. Draw
+//|     primitives into it; only redrawn areas repaint. Colors come from
+//|     :py:func:`rgb565`."""
 //|
 //|     def __init__(
 //|         self,
@@ -24,9 +24,14 @@
 //|         transparent: Optional[int] = None,
 //|         buffer: Optional[WriteableBuffer] = None,
 //|     ) -> None:
-//|         """If ``buffer`` is given (>= width*height*2 bytes, e.g. a memoryview from
-//|         picogame_arena), the Canvas draws into it instead of allocating its own -
-//|         lets you pre-allocate big surfaces once and dodge heap fragmentation."""
+//|         """:param int width: surface width in pixels
+//|         :param int height: surface height in pixels
+//|         :param int transparent: color that is skipped when the canvas is
+//|             composited; `None` makes every pixel opaque
+//|         :param ~circuitpython_typing.WriteableBuffer buffer: optional caller-owned
+//|             pixel buffer of at least ``width * height * 2`` bytes (for example a
+//|             ``bytearray`` or a writable ``memoryview``). The canvas draws into it
+//|             instead of allocating its own."""
 //|         ...
 //|
 static mp_obj_t picogame_canvas_make_new(const mp_obj_type_t *type, size_t n_args,
@@ -97,7 +102,9 @@ static picogame_canvas_obj_t *cv_args(const mp_obj_t *a, size_t n, int *v) {
     return cv_self(a[0]);
 }
 
-//|     def clear(self, color: int) -> None: ...
+//|     def clear(self, color: int) -> None:
+//|         """Fill the whole surface with ``color``."""
+//|         ...
 //|
 static mp_obj_t canvas_clear(mp_obj_t self_in, mp_obj_t color) {
     picogame_canvas_clear(cv_self(self_in), mp_obj_get_int(color));
@@ -106,7 +113,9 @@ static mp_obj_t canvas_clear(mp_obj_t self_in, mp_obj_t color) {
 static MP_DEFINE_CONST_FUN_OBJ_2(canvas_clear_obj, canvas_clear);
 
 //|
-//|     def pixel(self, x: int, y: int, color: int) -> None: ...
+//|     def pixel(self, x: int, y: int, color: int) -> None:
+//|         """Set a single pixel."""
+//|         ...
 //|
 static mp_obj_t canvas_pixel(size_t n, const mp_obj_t *a) {
     int v[3];
@@ -116,7 +125,9 @@ static mp_obj_t canvas_pixel(size_t n, const mp_obj_t *a) {
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(canvas_pixel_obj, 4, 4, canvas_pixel);
 
 //|
-//|     def fill_rect(self, x: int, y: int, w: int, h: int, color: int) -> None: ...
+//|     def fill_rect(self, x: int, y: int, w: int, h: int, color: int) -> None:
+//|         """Fill an axis-aligned rectangle."""
+//|         ...
 //|
 static mp_obj_t canvas_fill_rect(size_t n, const mp_obj_t *a) {
     int v[5];
@@ -135,8 +146,8 @@ static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(canvas_fill_rect_obj, 6, 6, canvas_fi
 //|         flip_x: bool = False,
 //|         flip_y: bool = False,
 //|     ) -> None:
-//|         """Stamp frame ``frame`` of ``bitmap`` into the canvas at (x, y), honouring its transparent
-//|         key. The retained way to bake an image (icon, portrait, rendered text) into a panel."""
+//|         """Stamp frame ``frame`` of ``bitmap`` into the canvas at ``(x, y)``,
+//|         honoring the bitmap's transparent color."""
 //|         ...
 //|
 static mp_obj_t canvas_blit(size_t n, const mp_obj_t *a) {
@@ -165,9 +176,21 @@ static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(canvas_blit_obj, 4, 7, canvas_blit);
 //|         cam_x: int,
 //|         cam_y: int,
 //|     ) -> None:
-//|         """Fill rows below ``horizon`` with a perspective ground plane (Mode-7) of
-//|         ``texture`` (power-of-2 dims). The int args are 16.16 fixed-point camera
-//|         terms; use the picogame_mode7 helper to compute them from angle/pos/fov."""
+//|         """Fill rows below ``horizon`` with a perspective projection of ``texture``.
+//|         For a higher-level interface see the separately distributed
+//|         ``picogame_mode7`` helper, which computes the camera terms from an angle,
+//|         position and field of view.
+//|
+//|         :param Bitmap texture: texture whose width and height are powers of two
+//|         :param int horizon: first canvas row to fill
+//|         :param int y_off: vertical offset of the projection, in rows
+//|         :param int z: camera height (signed 16.16 fixed-point)
+//|         :param int rx0: ray x at the left column (signed 16.16 fixed-point)
+//|         :param int ry0: ray y at the left column (signed 16.16 fixed-point)
+//|         :param int rsx: per-column ray step x (signed 16.16 fixed-point)
+//|         :param int rsy: per-column ray step y (signed 16.16 fixed-point)
+//|         :param int cam_x: camera x position (signed 16.16 fixed-point)
+//|         :param int cam_y: camera y position (signed 16.16 fixed-point)"""
 //|         ...
 //|
 static mp_obj_t canvas_mode7(size_t n, const mp_obj_t *a) {
@@ -189,14 +212,20 @@ static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(canvas_mode7_obj, 11, 11, canvas_mode
 //|         x_off: int = 0,
 //|         y_off: int = 0,
 //|     ) -> None:
-//|         """Fill ``n`` triangles in ONE call: ``verts`` = int16 x0,y0,x1,y1,x2,y2 per triangle,
-//|         ``colors`` = uint16 wire RGB565 per triangle. Same rasteriser as fill_triangle, but the
-//|         whole batch crosses the Python/C boundary once - the win for many small triangles
-//|         (blocky 3D, low-poly meshes) where the ~10 us per-call overhead otherwise dominates.
-//|         ``x_off``/``y_off`` translate every vertex before clipping - pass the negated strip
-//|         origin (``y_off=-vy``) to replay one screen-space batch into each StripDraw view;
-//|         triangles fully outside the band are rejected with three compares, so the
-//|         per-strip re-submission stays cheap."""
+//|         """Fill a batch of triangles in one call, which is faster than repeated
+//|         :py:meth:`fill_triangle` calls for many triangles.
+//|
+//|         :param ~circuitpython_typing.ReadableBuffer verts: ``6 * n`` ``int16``
+//|             values: x0, y0, x1, y1, x2, y2 per triangle
+//|         :param ~circuitpython_typing.ReadableBuffer colors: ``n`` ``uint16`` colors,
+//|             one per triangle
+//|         :param int n: number of triangles
+//|         :param int x_off: added to every x before clipping
+//|         :param int y_off: added to every y before clipping
+//|
+//|         The offsets translate the whole batch, so one screen-space batch can be
+//|         replayed into each `StripDraw` view by passing the negated view origin
+//|         (``x_off=-vx, y_off=-vy``); triangles outside the view are skipped."""
 //|         ...
 //|
 static mp_obj_t canvas_fill_triangles(size_t na, const mp_obj_t *a) {
@@ -233,13 +262,24 @@ static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(canvas_fill_triangles_obj, 4, 6, canv
 //|         x_off: int = 0,
 //|         y_off: int = 0,
 //|     ) -> None:
-//|         """Fill ``n`` vertical colour spans in ONE call: span i covers x0s[i]..x1s[i] (exclusive)
-//|         by tops[i]..bots[i] (exclusive) in colour colors[i] - all five are uint16 arrays.
-//|         The batch primitive for column renderers (a raycaster's merged wall runs): the whole
-//|         span list crosses the Python/C boundary once per strip instead of once per span.
-//|         ``x_off``/``y_off`` translate every span before clipping - pass the negated strip origin
-//|         (x_off=-vx, y_off=-vy) to replay one screen-space batch into each StripDraw view;
-//|         spans outside the band are rejected with two compares."""
+//|         """Fill a batch of vertical color spans in one call. Span ``i`` covers
+//|         columns ``x0s[i]`` through ``x1s[i]`` (exclusive) and rows ``tops[i]``
+//|         through ``bots[i]`` (exclusive) in color ``colors[i]``.
+//|
+//|         :param ~circuitpython_typing.ReadableBuffer x0s: ``n`` ``uint16`` left edges
+//|         :param ~circuitpython_typing.ReadableBuffer x1s: ``n`` ``uint16`` exclusive
+//|             right edges
+//|         :param ~circuitpython_typing.ReadableBuffer tops: ``n`` ``uint16`` top rows
+//|         :param ~circuitpython_typing.ReadableBuffer bots: ``n`` ``uint16`` exclusive
+//|             bottom rows
+//|         :param ~circuitpython_typing.ReadableBuffer colors: ``n`` ``uint16`` colors
+//|         :param int n: number of spans
+//|         :param int x_off: added to every x before clipping
+//|         :param int y_off: added to every y before clipping
+//|
+//|         The offsets translate the whole batch, so one screen-space batch (for
+//|         example `raycast` wall runs) can be replayed into each `StripDraw` view by
+//|         passing the negated view origin; spans outside the view are skipped."""
 //|         ...
 //|
 static mp_obj_t canvas_vspans(size_t na, const mp_obj_t *a) {
@@ -290,11 +330,22 @@ static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(canvas_vspans_obj, 7, 9, canvas_vspan
 //|         d07_q8: int,
 //|         colors: ReadableBuffer,
 //|     ) -> None:
-//|         """Draw one racing-road strip (OutRun-style) from precomputed tables - the whole
-//|         per-scanline loop in one call. ri0 = road-table row of this surface's row 0 (may be
-//|         negative = sky rows). tab = int16 rows of {edge_w, dash_hw, wb05_q8, wb07_q8, flags};
-//|         rl/rr = int16 per-row edges (see picogame.road_edges); d05/d07 = Q8 scroll phases;
-//|         colors = 6x uint16 {sky, road_a, road_b, rumble_a, rumble_b, dash}."""
+//|         """Draw one racing-road strip from precomputed tables. This method is
+//|         intended for use by the separately distributed ``picogame_road`` helper,
+//|         which builds the tables.
+//|
+//|         :param int ri0: road-table row of this surface's row 0; negative values
+//|             are sky rows
+//|         :param ~circuitpython_typing.ReadableBuffer tab: ``int16`` rows of
+//|             ``edge_w``, ``dash_hw``, ``wb05_q8``, ``wb07_q8``, ``flags``
+//|         :param ~circuitpython_typing.ReadableBuffer rl: ``int16`` per-row left
+//|             edges, as computed by :py:func:`road_edges`
+//|         :param ~circuitpython_typing.ReadableBuffer rr: ``int16`` per-row right
+//|             edges
+//|         :param int d05_q8: scroll phase (Q8 fixed-point)
+//|         :param int d07_q8: scroll phase (Q8 fixed-point)
+//|         :param ~circuitpython_typing.ReadableBuffer colors: six ``uint16`` colors,
+//|             in order: sky, road a, road b, rumble a, rumble b, dash"""
 //|         ...
 //|
 static mp_obj_t canvas_road(size_t n, const mp_obj_t *a) {
@@ -318,7 +369,9 @@ static mp_obj_t canvas_road(size_t n, const mp_obj_t *a) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(canvas_road_obj, 8, 8, canvas_road);
 
-//|     def rect(self, x: int, y: int, w: int, h: int, color: int) -> None: ...
+//|     def rect(self, x: int, y: int, w: int, h: int, color: int) -> None:
+//|         """Draw a one-pixel rectangle outline."""
+//|         ...
 //|
 static mp_obj_t canvas_rect(size_t n, const mp_obj_t *a) {
     int v[5];
@@ -328,7 +381,9 @@ static mp_obj_t canvas_rect(size_t n, const mp_obj_t *a) {
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(canvas_rect_obj, 6, 6, canvas_rect);
 
 //|
-//|     def line(self, x0: int, y0: int, x1: int, y1: int, color: int) -> None: ...
+//|     def line(self, x0: int, y0: int, x1: int, y1: int, color: int) -> None:
+//|         """Draw a one-pixel line between two points."""
+//|         ...
 //|
 static mp_obj_t canvas_line(size_t n, const mp_obj_t *a) {
     int v[5];
@@ -338,7 +393,9 @@ static mp_obj_t canvas_line(size_t n, const mp_obj_t *a) {
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(canvas_line_obj, 6, 6, canvas_line);
 
 //|
-//|     def fill_circle(self, cx: int, cy: int, r: int, color: int) -> None: ...
+//|     def fill_circle(self, cx: int, cy: int, r: int, color: int) -> None:
+//|         """Fill a circle of radius ``r`` centered on ``(cx, cy)``."""
+//|         ...
 //|
 static mp_obj_t canvas_fill_circle(size_t n, const mp_obj_t *a) {
     int v[4];
@@ -348,7 +405,9 @@ static mp_obj_t canvas_fill_circle(size_t n, const mp_obj_t *a) {
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(canvas_fill_circle_obj, 5, 5, canvas_fill_circle);
 
 //|
-//|     def circle(self, cx: int, cy: int, r: int, color: int) -> None: ...
+//|     def circle(self, cx: int, cy: int, r: int, color: int) -> None:
+//|         """Draw a one-pixel circle outline."""
+//|         ...
 //|
 static mp_obj_t canvas_circle(size_t n, const mp_obj_t *a) {
     int v[4];
@@ -358,7 +417,9 @@ static mp_obj_t canvas_circle(size_t n, const mp_obj_t *a) {
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(canvas_circle_obj, 5, 5, canvas_circle);
 
 //|
-//|     def ring(self, cx: int, cy: int, r: int, thickness: int, color: int) -> None: ...
+//|     def ring(self, cx: int, cy: int, r: int, thickness: int, color: int) -> None:
+//|         """Draw a circle outline ``thickness`` pixels wide, grown inwards from radius ``r``."""
+//|         ...
 //|
 static mp_obj_t canvas_ring(size_t n, const mp_obj_t *a) {
     int v[5];
@@ -370,7 +431,9 @@ static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(canvas_ring_obj, 6, 6, canvas_ring);
 //|
 //|     def triangle(
 //|         self, x0: int, y0: int, x1: int, y1: int, x2: int, y2: int, color: int
-//|     ) -> None: ...
+//|     ) -> None:
+//|         """Draw a one-pixel triangle outline through the three points."""
+//|         ...
 //|
 static mp_obj_t canvas_triangle(size_t n, const mp_obj_t *a) {
     int v[7];
@@ -382,7 +445,10 @@ static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(canvas_triangle_obj, 8, 8, canvas_tri
 //|
 //|     def fill_triangle(
 //|         self, x0: int, y0: int, x1: int, y1: int, x2: int, y2: int, color: int
-//|     ) -> None: ...
+//|     ) -> None:
+//|         """Fill a triangle. See :py:meth:`fill_triangles` to submit a whole batch
+//|         in one call."""
+//|         ...
 //|
 static mp_obj_t canvas_fill_triangle(size_t n, const mp_obj_t *a) {
     int v[7];
@@ -392,7 +458,9 @@ static mp_obj_t canvas_fill_triangle(size_t n, const mp_obj_t *a) {
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(canvas_fill_triangle_obj, 8, 8, canvas_fill_triangle);
 
 //|
-//|     def ellipse(self, cx: int, cy: int, rx: int, ry: int, color: int) -> None: ...
+//|     def ellipse(self, cx: int, cy: int, rx: int, ry: int, color: int) -> None:
+//|         """Draw a one-pixel ellipse outline with radii ``rx``/``ry``."""
+//|         ...
 //|
 static mp_obj_t canvas_ellipse(size_t n, const mp_obj_t *a) {
     int v[5];
@@ -402,7 +470,9 @@ static mp_obj_t canvas_ellipse(size_t n, const mp_obj_t *a) {
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(canvas_ellipse_obj, 6, 6, canvas_ellipse);
 
 //|
-//|     def fill_ellipse(self, cx: int, cy: int, rx: int, ry: int, color: int) -> None: ...
+//|     def fill_ellipse(self, cx: int, cy: int, rx: int, ry: int, color: int) -> None:
+//|         """Fill an ellipse with radii ``rx``/``ry``."""
+//|         ...
 //|
 static mp_obj_t canvas_fill_ellipse(size_t n, const mp_obj_t *a) {
     int v[5];
@@ -412,7 +482,9 @@ static mp_obj_t canvas_fill_ellipse(size_t n, const mp_obj_t *a) {
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(canvas_fill_ellipse_obj, 6, 6, canvas_fill_ellipse);
 
 //|
-//|     def fill_round_rect(self, x: int, y: int, w: int, h: int, r: int, color: int) -> None: ...
+//|     def fill_round_rect(self, x: int, y: int, w: int, h: int, r: int, color: int) -> None:
+//|         """Fill a rectangle with corners rounded to radius ``r``."""
+//|         ...
 //|
 static mp_obj_t canvas_fill_round_rect(size_t n, const mp_obj_t *a) {
     int v[6];
@@ -422,7 +494,10 @@ static mp_obj_t canvas_fill_round_rect(size_t n, const mp_obj_t *a) {
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(canvas_fill_round_rect_obj, 7, 7, canvas_fill_round_rect);
 
 //|
-//|     def frame3d(self, x: int, y: int, w: int, h: int, light: int, dark: int) -> None: ...
+//|     def frame3d(self, x: int, y: int, w: int, h: int, light: int, dark: int) -> None:
+//|         """Draw a one-pixel bevelled frame: top and left edges in ``light``, bottom and
+//|         right in ``dark``, giving a raised look (swap the two for a sunken one)."""
+//|         ...
 //|
 static mp_obj_t canvas_frame3d(size_t n, const mp_obj_t *a) {
     int v[6];
@@ -435,11 +510,12 @@ static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(canvas_frame3d_obj, 7, 7, canvas_fram
 //|     def text(
 //|         self, x: int, y: int, s: str, fg: int, font: fontio.BuiltinFont, bg: int | None = None
 //|     ) -> None:
-//|         """Composite ``s`` into the surface in C, rasterizing each glyph from ``font`` on the fly -
-//|         no Python glyph cache, no per-call Bitmap/Sprite (zero retained text RAM, no fragmentation).
-//|         If ``bg`` is given the glyph background is filled too; otherwise it is transparent. Inside a
-//|         StripDraw callback the ``view`` is a Canvas pointing at the live strip, so ``view.text(...)``
-//|         draws immediate-mode HUD/screen text straight into the frame."""
+//|         """Draw ``s`` into the surface, rasterizing each glyph from ``font`` as it
+//|         is drawn; no memory is retained between calls. If ``bg`` is given the glyph
+//|         background is filled with it, otherwise it is transparent. Inside a
+//|         `StripDraw` callback the view is a Canvas, so ``view.text(...)`` draws
+//|         text directly into the frame."""
+//|         ...
 //|
 static mp_obj_t canvas_text(size_t n, const mp_obj_t *a) {
     const char *s = mp_obj_str_get_str(a[3]);
@@ -453,7 +529,9 @@ static mp_obj_t canvas_text(size_t n, const mp_obj_t *a) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(canvas_text_obj, 6, 7, canvas_text);
 
-//|     def move(self, x: int, y: int) -> None: ...
+//|     def move(self, x: int, y: int) -> None:
+//|         """Move the surface's top-left corner to (x, y) and mark both the old and new area dirty."""
+//|         ...
 //|
 static mp_obj_t canvas_move(mp_obj_t self_in, mp_obj_t x_in, mp_obj_t y_in) {
     picogame_canvas_obj_t *self = cv_self(self_in);
@@ -472,11 +550,17 @@ static MP_DEFINE_CONST_FUN_OBJ_3(canvas_move_obj, canvas_move);
 
 //|
 //|     x: int
+//|     """Horizontal position of the canvas top-left corner. (read-only)
+//|
+//|     Set with :py:meth:`move`."""
 //|     y: int
-//|     """Current pixel position of the canvas top-left (read-only; set with move())."""
+//|     """Vertical position of the canvas top-left corner. (read-only)
+//|
+//|     Set with :py:meth:`move`."""
 //|     width: int
+//|     """Surface width in pixels. (read-only)"""
 //|     height: int
-//|     """Surface size in pixels (read-only)."""
+//|     """Surface height in pixels. (read-only)"""
 //|
 //|
 static mp_obj_t canvas_get_x(mp_obj_t self_in) {

@@ -27,16 +27,23 @@
 #include "shared-module/picogame/Sprite.h"
 
 //| class Triangles:
+//|     """A retained triangle batch drawn as a `Scene` layer. The batch is
+//|     rasterized directly into each render strip; no per-strip Python runs and no
+//|     pixel buffer is held. Triangles layers always draw in screen coordinates and
+//|     ignore the scene's view offset.
+//|
+//|     A typical frame projects points with :py:func:`project`, fills the arrays in
+//|     place back to front, sets :py:attr:`count` and calls
+//|     :py:meth:`Scene.refresh`."""
+//|
 //|     def __init__(self, verts: ReadableBuffer, colors: ReadableBuffer) -> None:
-//|         """A retained SCREEN-SPACE triangle batch drawn entirely in C by the compositor:
-//|         `verts` = int16 x0,y0,x1,y1,x2,y2 per triangle, `colors` = uint16 wire RGB565 per
-//|         triangle - both CALLER-OWNED (fill them in place each frame). Set `count` to how
-//|         many triangles should draw; the assignment marks the layer dirty (full screen).
-//|         Unlike a StripDraw callback this runs no Python per strip, and unlike a Canvas it
-//|         holds no pixel buffer - the batch rasterises straight into each render strip with
-//|         a cheap band reject. The 3D-scene layer: pg.project into the arrays, painter's-order
-//|         the faces, set count, scene.refresh()."""
+//|         """:param ~circuitpython_typing.ReadableBuffer verts: caller-owned buffer of
+//|             ``int16`` values, six per triangle: x0, y0, x1, y1, x2, y2. Refill it in
+//|             place each frame.
+//|         :param ~circuitpython_typing.ReadableBuffer colors: caller-owned buffer of
+//|             ``uint16`` colors, one per triangle"""
 //|         ...
+//|
 static mp_obj_t picogame_triangles_make_new(const mp_obj_type_t *type, size_t n_args,
     size_t n_kw, const mp_obj_t *all_args) {
     mp_arg_check_num(n_args, n_kw, 2, 2, false);
@@ -57,8 +64,10 @@ static mp_obj_t picogame_triangles_make_new(const mp_obj_type_t *type, size_t n_
 }
 
 //|     count: int
-//|     """How many triangles of the batch draw next refresh (clamped to the buffer
-//|     capacity). Assigning marks the layer dirty for a full repaint."""
+//|     """How many triangles of the batch draw on the next refresh, clamped to the
+//|     buffer capacity. Assigning marks the layer dirty for a full repaint."""
+//|
+//|
 static mp_obj_t tri_get_count(mp_obj_t self_in) {
     return MP_OBJ_NEW_SMALL_INT(((picogame_triangles_obj_t *)MP_OBJ_TO_PTR(self_in))->count);
 }

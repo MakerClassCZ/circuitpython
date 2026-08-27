@@ -17,18 +17,20 @@
 #include "common-hal/picogame/Display.h"
 
 //| class Display:
-//|     """Fast display backend: wraps an existing ``busdisplay.BusDisplay`` and
-//|     pushes pixels with asynchronous double-buffered DMA, overlapping the CPU
-//|     blit of the next strip with the SPI transfer of the current one.
+//|     """An accelerated display backend that wraps an existing
+//|     :py:class:`~busdisplay.BusDisplay` and sends pixels with asynchronous,
+//|     double-buffered DMA. It reuses the wrapped display's bus, window commands
+//|     and dimensions.
 //|
-//|     Controller- and resolution-agnostic: reuses the busdisplay's SPI bus,
-//|     window commands and dimensions."""
+//|     Constructing it raises :py:class:`NotImplementedError` when
+//|     :py:data:`FAST_DISPLAY_SUPPORTED` is `False`."""
 //|
 //|     def __init__(self, display: busdisplay.BusDisplay, *, rgb444: bool = False) -> None:
-//|         """rgb444=True drives the panel in 12-bit RGB444 instead of 16-bit RGB565: ~25% less
-//|         SPI traffic (and thus more FPS on full-screen / scrolling, transfer-bound scenes), at
-//|         4096 colours instead of 65536 - which PAL8 art doesn't notice. The panel controller
-//|         must support COLMOD 12-bit (ST7789/ST7735 do; ILI9341 does NOT)."""
+//|         """:param ~busdisplay.BusDisplay display: the display to wrap
+//|         :param bool rgb444: drive the panel in 12-bit RGB444 instead of 16-bit
+//|             RGB565, reducing bus traffic at the cost of color depth (4,096 colors
+//|             instead of 65,536). The panel controller must support 12-bit color;
+//|             ST7789 and ST7735 do, ILI9341 does not. See :py:data:`RGB444_SUPPORTED`."""
 //|         ...
 //|
 static mp_obj_t picogame_display_make_new(const mp_obj_type_t *type, size_t n_args,
@@ -62,13 +64,13 @@ static mp_obj_t picogame_display_make_new(const mp_obj_type_t *type, size_t n_ar
 //|         *,
 //|         background: int = 0,
 //|     ) -> None:
-//|         """Render ``sprites`` into region [x0,x1) x [y0,y1) and push via async
-//|         DMA. ``buffer_a``/``buffer_b`` are two equal strip buffers used for
-//|         double buffering (each >= region_width*2 bytes).
+//|         """Render ``sprites`` into the screen region from ``(x0, y0)`` up to, but
+//|         not including, ``(x1, y1)``, and send it with asynchronous DMA. ``buffer_a`` and ``buffer_b`` are two
+//|         equal strip buffers of at least ``(x1 - x0) * 2`` bytes each, used for
+//|         double buffering.
 //|
-//|         SPRITES ONLY (unlike module-level ``picogame.render()``, which also accepts
-//|         StripDraw/Canvas/Tilemap/Particles): this is the low-level double-buffered
-//|         sprite push. For mixed layer kinds use a ``Scene`` or ``picogame.render()``."""
+//|         This method accepts sprites only. For mixed layer kinds use a `Scene` or
+//|         the module-level :py:func:`render`."""
 //|         ...
 //|
 //|

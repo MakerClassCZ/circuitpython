@@ -31,22 +31,19 @@
 // ---------------------------------------------------------------------------
 
 //| class StripDraw:
-//|     """An immediate-mode draw layer that holds NO pixel buffer. Each refresh, for
-//|     every render strip overlapping its rect, ``callback(view, vx, vy, vw, vh)`` is
-//|     called with a :py:class:`Canvas` ``view`` pointing straight at the live strip
-//|     buffer - so you draw primitives directly into the frame (zero RAM, vs a Canvas
-//|     which costs width*height*2 bytes). The view's local (0, 0) is screen pixel
-//|     (vx, vy); (vw, vh) is the strip size. Draw only the rows in [vy, vy+vh) for
-//|     speed (anything outside the view is clipped anyway). The rect is repainted every
-//|     frame, so use it for animated / scanline content (pseudo-3D, gradients,
-//|     procedural backgrounds), not static art (use Canvas for that).
+//|     """An immediate-mode draw layer that holds no pixel buffer. On each refresh,
+//|     for every render strip overlapping its rectangle, ``callback(view, vx, vy,
+//|     vw, vh)`` is called with a `Canvas` view of the live strip buffer, so the
+//|     callback draws primitives directly into the frame. StripDraw layers always
+//|     draw in screen coordinates and ignore the scene's view offset.
 //|
-//|     COORDINATE CONTRACT: ``vx`` is the RENDER REGION's origin (NOT this layer's x), and the
-//|     view spans the FULL region WIDTH (the layer's rect only gates which ROWS run). So draw at
-//|     ABSOLUTE screen coords minus (vx, vy), and fill only your own rect with ``fill_rect`` -
-//|     ``view.clear()`` fills the whole region width. (When you render a StripDraw via
-//|     ``picogame.render([sd], buf, x,y,x+w,y+h)`` the region == the rect, so vx == x.)
-//|     Text via ``Canvas.text`` is ASCII (the built-in font); non-ASCII has no glyph."""
+//|     ``(vx, vy)`` is the view origin in screen coordinates and ``(vw, vh)`` is
+//|     its size: to draw a screen point ``(sx, sy)``, draw at ``(sx - vx, sy - vy)``
+//|     in ``view``. The view may span the full render-region width even when the
+//|     layer is narrower (the layer's rectangle only selects which rows run), so
+//|     fill your own rectangle with :py:meth:`Canvas.fill_rect` rather than
+//|     ``view.clear()``, which fills the whole width. Text drawn with
+//|     :py:meth:`Canvas.text` supports ASCII only."""
 //|
 //|     def __init__(
 //|         self,
@@ -55,7 +52,18 @@
 //|         y: int = 0,
 //|         width: int = 0,
 //|         height: int = 0,
-//|     ) -> None: ...
+//|         *,
+//|         always_dirty: bool = True,
+//|     ) -> None:
+//|         """:param callback: called for each overlapping render strip as
+//|             ``callback(view, vx, vy, vw, vh)``
+//|         :param int x: left edge of the layer's screen rectangle
+//|         :param int y: top edge of the layer's screen rectangle
+//|         :param int width: rectangle width in pixels
+//|         :param int height: rectangle height in pixels
+//|         :param bool always_dirty: see :py:attr:`always_dirty`"""
+//|         ...
+//|
 static mp_obj_t picogame_stripdraw_make_new(const mp_obj_type_t *type, size_t n_args,
     size_t n_kw, const mp_obj_t *all_args) {
     enum { ARG_callback, ARG_x, ARG_y, ARG_width, ARG_height, ARG_always_dirty };
@@ -96,13 +104,18 @@ static mp_obj_t picogame_stripdraw_make_new(const mp_obj_type_t *type, size_t n_
     return MP_OBJ_FROM_PTR(self);
 }
 
+//|
 //|     x: int
+//|     """Left edge of the layer's screen rectangle."""
 //|     y: int
+//|     """Top edge of the layer's screen rectangle."""
 //|     width: int
+//|     """Width of the layer's screen rectangle in pixels."""
 //|     height: int
-//|     """The screen rect repainted each refresh (read/write). Move or resize the layer
-//|     by assigning these. Shrinking the rect leaves stale pixels behind - follow a
-//|     shrink with ``scene.invalidate()`` for a clean repaint (as the fx helpers do)."""
+//|     """Height of the layer's screen rectangle in pixels.
+//|
+//|     Moving or resizing the rectangle by assigning any of these can leave the old
+//|     area stale; call :py:meth:`Scene.invalidate` afterwards for a clean repaint."""
 static mp_obj_t sd_get_x(mp_obj_t self_in) {
     return MP_OBJ_NEW_SMALL_INT(((picogame_stripdraw_obj_t *)MP_OBJ_TO_PTR(self_in))->x);
 }
@@ -148,10 +161,11 @@ static MP_DEFINE_CONST_FUN_OBJ_2(sd_set_height_obj, sd_set_height);
 MP_PROPERTY_GETSET(sd_height_obj, (mp_obj_t)&sd_get_height_obj, (mp_obj_t)&sd_set_height_obj);
 
 //|     always_dirty: bool
-//|     """True (default): repaint every frame - for animated content (pseudo-3D, gradients). False:
-//|     repaint only when ``invalidate()``d (or overlapped by another dirty layer) - for on-change UI,
-//|     so a static panel doesn't re-rasterize+re-push every frame. With False you MUST invalidate() on
-//|     every content/visibility change (it's invisible until you do)."""
+//|     """When `True` (the default) the rectangle repaints every frame, for animated
+//|     content. When `False` the layer renders once initially and then repaints only
+//|     after an :py:meth:`invalidate` call or when overlapped by another dirty
+//|     layer; call :py:meth:`invalidate` after each content change."""
+//|
 static mp_obj_t sd_get_always_dirty(mp_obj_t self_in) {
     return mp_obj_new_bool(((picogame_stripdraw_obj_t *)MP_OBJ_TO_PTR(self_in))->always_dirty);
 }
@@ -164,11 +178,16 @@ static MP_DEFINE_CONST_FUN_OBJ_2(sd_set_always_dirty_obj, sd_set_always_dirty);
 MP_PROPERTY_GETSET(sd_always_dirty_obj, (mp_obj_t)&sd_get_always_dirty_obj, (mp_obj_t)&sd_set_always_dirty_obj);
 
 //|     def invalidate(self, x: int = 0, y: int = 0, w: int = 0, h: int = 0) -> None:
-//|         """Mark dirty so the layer repaints on the next refresh (only needed when
-//|         ``always_dirty=False``). With no args, the whole layer repaints. Pass a rect in
-//|         VIEW-LOCAL coordinates (the same (0,0)-at-``(vx, vy)`` space the draw callback uses) to
-//|         repaint only that region - like Canvas/Tilemap, the Scene then recomposites and pushes just
-//|         those rows. Repeated calls union; the rect is clamped to the layer."""
+//|         """Mark the layer dirty so it repaints on the next refresh; only needed
+//|         when ``always_dirty`` is `False`.
+//|
+//|         With no arguments the whole layer repaints. To repaint one region, pass
+//|         all four values as a rectangle in the view-local coordinates the draw
+//|         callback uses; an incomplete rectangle repaints the whole layer. Repeated
+//|         calls accumulate, and the rectangle is clamped to the layer."""
+//|         ...
+//|
+//|
 static mp_obj_t sd_invalidate(size_t n_args, const mp_obj_t *args) {
     picogame_stripdraw_obj_t *self = MP_OBJ_TO_PTR(args[0]);
     if (n_args >= 5) {                       // (x, y, w, h) in view-local coords -> clamped scene rect

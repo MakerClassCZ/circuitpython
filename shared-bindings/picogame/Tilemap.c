@@ -82,10 +82,11 @@ static MP_DEFINE_CONST_FUN_OBJ_3(picogame_tilemap_get_tile_obj, picogame_tilemap
 //|         flip_y: bool = False,
 //|         transpose: bool = False,
 //|     ) -> None:
-//|         """Set the tile at (tx, ty) and mark it dirty. The keyword ``flip_x``/``flip_y``/
-//|         ``transpose`` flags orient the tile - together they give all 8 orientations
-//|         (4 rotations x mirror) for free at draw time; use them with a deduplicated tileset
-//|         (png2picogame --dedup REMAP). Out-of-range writes are ignored."""
+//|         """Set the tile at ``(tx, ty)`` and mark it dirty. The keyword flags orient
+//|         the tile at draw time; together they yield all 8 orientations (4 rotations
+//|         times mirror), so one stored tile can serve as several. The flags can
+//|         represent the remap table emitted by the separately distributed
+//|         ``png2picogame.py --dedup`` tool. Out-of-range writes are ignored."""
 //|         ...
 //|
 static mp_obj_t picogame_tilemap_set_tile(size_t n_args, const mp_obj_t *pos_args, mp_map_t *kw_args) {
@@ -187,11 +188,17 @@ static mp_obj_t picogame_tilemap_fill(mp_obj_t self_in, mp_obj_t value_in) {
 static MP_DEFINE_CONST_FUN_OBJ_2(picogame_tilemap_fill_obj, picogame_tilemap_fill);
 
 //|     x: int
+//|     """Horizontal position of the map's top-left corner. (read-only)
+//|
+//|     Set with :py:meth:`move`."""
 //|     y: int
-//|     """Current pixel position of the map's top-left (read-only; set with move())."""
+//|     """Vertical position of the map's top-left corner. (read-only)
+//|
+//|     Set with :py:meth:`move`."""
 //|     cols: int
+//|     """Map width in tiles. (read-only)"""
 //|     rows: int
-//|     """Map size in tiles (read-only)."""
+//|     """Map height in tiles. (read-only)"""
 //|
 //|
 static mp_obj_t tilemap_get_x(mp_obj_t self_in) {

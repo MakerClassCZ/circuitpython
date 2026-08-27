@@ -81,35 +81,91 @@ static busdisplay_busdisplay_obj_t *pg_get_display(mp_obj_t obj) {
     return MP_OBJ_TO_PTR(native);
 }
 
-//| """2D game engine for the PicoPad and similar boards.
+//| """Game rendering
 //|
-//| Draws arbitrary-size sprites (unlike ``_stage``'s fixed 16x16 tiles) to a
-//| ``busdisplay`` through a reusable strip buffer, with a dirty-rect scene,
-//| tilemaps, particles, a drawing canvas and camera/effects.
+//| The `picogame` module composites sprites, tilemaps, drawing canvases,
+//| particle layers, 3D triangle batches and immediate-mode callbacks into a
+//| small reusable strip buffer and sends each strip to the display, so a full-screen game does not
+//| need a full-screen buffer. A :py:class:`Scene` tracks what changed and
+//| repaints only those regions when :py:meth:`Scene.refresh` is called.
 //|
-//| **Relationship to displayio.** picogame does not replace or extend
-//| :py:mod:`displayio`; it is a second, game-shaped way to drive the same
-//| hardware, and the two do not share a display at the same time. displayio
-//| retains a widget tree the supervisor refreshes for you, holds a full
-//| :py:class:`~displayio.Bitmap` per image and is the right tool for UI. picogame
-//| composites on demand, one horizontal strip at a time, into a buffer the game
-//| owns: nothing is retained per pixel, so a scrolling game fits in the RAM a
-//| microcontroller actually has, and the game decides when a frame happens
-//| (``scene.refresh()``).
+//| A scene targets a :py:class:`~busdisplay.BusDisplay`, an accelerated
+//| :py:class:`Display` or a RAM :py:class:`Framebuffer`. picogame drives the
+//| display itself: set ``display.auto_refresh = False``, and do not use
+//| displayio groups on the same display at the same time.
 //|
-//| displayio and picogame share the Display object. A ``picogame.Scene`` takes the same
-//| :py:class:`~busdisplay.BusDisplay` displayio uses - it just talks to it
-//| directly instead of through the displayio refresh loop, so set
-//| ``display.auto_refresh = False`` (``picogame_game.setup()`` does this) and let
-//| the game drive. On boards that scan out of RAM, ``picogame.Framebuffer`` takes
-//| that buffer instead. Bitmaps are separate types: displayio's is a mutable
-//| indexed surface, picogame's is read-only pixel data (PAL8 or wire RGB565) that
-//| may live in flash, so it costs no RAM at all."""
+//| Unless stated otherwise, color integers are display transfer-order RGB565
+//| values as returned by :py:func:`rgb565`. Render rectangles include
+//| ``(x0, y0)`` and exclude ``(x1, y1)``; collision rectangles use inclusive
+//| edges as documented by :py:func:`collide`.
+//|
+//| .. note::
+//|    This module is the engine's rendering and compute core and is fully
+//|    usable on its own. The separately distributed pure-Python `picogame
+//|    helper libraries <https://github.com/MakerClassCZ/picogame-libs>`_
+//|    (``picogame_game``, ``picogame_ray`` and others) build a complete game
+//|    framework on top of it: display, input and audio setup that adapts to
+//|    the board, game-loop timing, sprite pools and collision helpers,
+//|    animation, text, HUD and menus, sound effects and music, visual
+//|    effects, saved games, scene loading and pseudo-3D cameras. A desktop
+//|    simulator, asset-conversion tools, examples and tutorials live in the
+//|    `picogame repository <https://github.com/MakerClassCZ/picogame>`_, with
+//|    documentation at `picogame.makerclass.cz
+//|    <https://picogame.makerclass.cz/>`_.
+//|
+//| Example::
+//|
+//|   import array
+//|   import board
+//|   import time
+//|
+//|   import picogame
+//|
+//|   display = board.DISPLAY
+//|   display.auto_refresh = False
+//|
+//|   size = display.width * picogame.STRIP_H * 2
+//|   scene = picogame.Scene(display, bytearray(size), bytearray(size))
+//|
+//|   # One solid white 8x8 frame.
+//|   data = array.array("H", [0xFFFF] * 64)
+//|   bitmap = picogame.Bitmap(data, 8, 8)
+//|   player = scene.add(picogame.Sprite(bitmap, x=0, y=display.height // 2))
+//|
+//|   while True:
+//|       player.x = (player.x + 1) % display.width
+//|       scene.refresh()
+//|       time.sleep(0.02)
+//|
+//| This moves a white square across the screen, repainting only the pixels
+//| that changed each frame."""
 //|
 //| RGB565: int
 //| """16-bit color bitmap format (wire byte order)."""
 //| PAL8: int
 //| """8-bit paletted bitmap format."""
+//|
+//| STRIP_H: int
+//| """Default render-strip height in rows for this build. A `Scene` strip
+//| buffer is ``display.width * STRIP_H * 2`` bytes."""
+//|
+//| FPU: int
+//| """``1`` when `project` uses hardware floating point (its buffers are
+//| ``float32``), ``0`` when it uses signed 16.16 fixed-point ``int32``."""
+//|
+//| API_LEVEL: int
+//| """Version of the picogame API. Separately distributed helpers compare it
+//| against the version they were written for."""
+//|
+//| RGB444_SUPPORTED: bool
+//| """Whether `Display` supports ``rgb444=True`` on this board."""
+//|
+//| FAST_DISPLAY_SUPPORTED: bool
+//| """Whether the accelerated `Display` backend is available on this board."""
+//|
+//| FRAMEBUFFER_SUPPORTED: bool
+//| """Whether `Framebuffer` is available on this board."""
+//|
 //|
 //| def rgb565(r: int, g: int, b: int) -> int:
 //|     """Build a display wire-order RGB565 color from 8-bit components."""
@@ -144,19 +200,39 @@ static MP_DEFINE_CONST_FUN_OBJ_3(picogame_rgb565_obj, picogame_rgb565);
 //|     dist: WriteableBuffer,
 //|     runs: Optional[WriteableBuffer] = None,
 //| ) -> Optional[int]:
-//|     """Cast one frame of DDA wall rays (the compute core of the ``picogame_ray`` helper).
+//|     """Cast one frame of DDA wall rays. This function is intended for use by the
+//|     separately distributed ``picogame_ray`` helper, which computes the inputs.
 //|
-//|     ``map`` holds ``mw*mh`` wall-type bytes (0 = empty). The camera position
-//|     (``posx``/``posy``), the column-0 ray (``lrx``/``lry``) and the per-column ray step
-//|     (``srx``/``sry``) are 16.16 fixed-point; ``sh`` is the screen height and ``stride``
-//|     the pixel width of one column. For each of the ``ncols`` columns the wall top/bottom
-//|     rows, the wall colour (near/side pairs from ``wcolors``) and the perpendicular
-//|     distance (16.16, into ``dist``) are written to the output buffers.
+//|     All fixed-point arguments are signed 16.16 integers.
 //|
-//|     With ``runs`` (a ``uint16`` buffer of at least ``5*ncols``, five ``ncols``-long
-//|     planes: x0s, x1s, tops, bots, colors) adjacent equal columns are merged into wall
-//|     runs for :py:meth:`Canvas.vspans` and the run count is returned; without it
-//|     returns ``None``."""
+//|     :param ~circuitpython_typing.ReadableBuffer map: at least ``mw * mh`` wall-type
+//|         bytes, row-major; 0 is empty
+//|     :param int mw: map width in cells
+//|     :param int mh: map height in cells
+//|     :param int posx: camera x position (fixed-point)
+//|     :param int posy: camera y position (fixed-point)
+//|     :param int lrx: x of the column-0 ray direction (fixed-point)
+//|     :param int lry: y of the column-0 ray direction (fixed-point)
+//|     :param int srx: per-column ray step x (fixed-point)
+//|     :param int sry: per-column ray step y (fixed-point)
+//|     :param int sh: screen height in pixels
+//|     :param int stride: pixel width of one column
+//|     :param int ncols: number of columns to cast
+//|     :param ~circuitpython_typing.ReadableBuffer wcolors: two ``uint16`` colors per
+//|         wall type: near face at ``[type * 2]``, side face at ``[type * 2 + 1]``
+//|     :param ~circuitpython_typing.WriteableBuffer top: at least ``ncols`` ``uint16``
+//|         values; receives each column's wall top row
+//|     :param ~circuitpython_typing.WriteableBuffer bot: at least ``ncols`` ``uint16``
+//|         values; receives each column's wall bottom row
+//|     :param ~circuitpython_typing.WriteableBuffer col: at least ``ncols`` ``uint16``
+//|         values; receives each column's wall color
+//|     :param ~circuitpython_typing.WriteableBuffer dist: at least ``ncols`` ``int32``
+//|         values; receives each column's perpendicular distance (fixed-point)
+//|     :param ~circuitpython_typing.WriteableBuffer runs: optional; at least
+//|         ``5 * ncols`` ``uint16`` values, laid out as five ``ncols``-long planes
+//|         (x0s, x1s, tops, bots, colors). When given, adjacent equal columns are
+//|         merged into wall runs suitable for :py:meth:`Canvas.vspans` and the run
+//|         count is returned; otherwise `None` is returned."""
 //|     ...
 //|
 // C DDA wall raycaster for picogame_ray.Raycaster - INTEGER ONLY (16.16 fixed-point, no FPU; the paint,
@@ -317,14 +393,25 @@ static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(picogame_raycast_obj, 17, 18, picogam
 //|     dist: int,
 //|     cfg: ReadableBuffer,
 //| ) -> None:
-//|     """Compute one racing-road frame's left/right edge columns (the OutRun-style
-//|     ``compute_road`` loop of the ``picogame_road`` helper).
+//|     """Compute one racing-road frame's left and right edge columns. This function is
+//|     intended for use by the separately distributed ``picogame_road`` helper, which
+//|     packs the inputs.
 //|
 //|     Walks ``n`` screen rows bottom-up, accumulating the road curve, and writes the
-//|     left/right edge x coordinates into the ``int16`` buffers ``rl``/``rr``.
-//|     ``hw`` holds per-row half-widths (``int32``, 16.16), ``cx0`` is the 16.16 screen
-//|     centre including lateral offset, ``dist`` the integer world distance and ``cfg``
-//|     seven ``int32`` curve parameters (layout documented in the shared-module core)."""
+//|     edge x coordinates into ``rl`` and ``rr``.
+//|
+//|     :param ~circuitpython_typing.WriteableBuffer rl: at least ``n`` ``int16`` values;
+//|         receives the left edge per row
+//|     :param ~circuitpython_typing.WriteableBuffer rr: at least ``n`` ``int16`` values;
+//|         receives the right edge per row
+//|     :param ~circuitpython_typing.ReadableBuffer hw: at least ``n`` ``int32`` per-row
+//|         half-widths (signed 16.16 fixed-point)
+//|     :param int n: number of rows to compute
+//|     :param int cx0: screen center x including lateral offset (signed 16.16 fixed-point)
+//|     :param int dist: integer world distance
+//|     :param ~circuitpython_typing.ReadableBuffer cfg: seven ``int32`` curve parameters,
+//|         in order: ``f1_q20``, ``f2_q20``, ``amp1k_q16``, ``amp2k_q16``, ``world_step``,
+//|         ``curve_step``, ``d_row_off``"""
 //|     ...
 //|
 
@@ -386,15 +473,22 @@ static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(picogame_road_edges_obj, 7, 7, picoga
 //|     out_sx: WriteableBuffer,
 //|     out_sy: WriteableBuffer,
 //| ) -> None:
-//|     """Batch-project ``n`` 3D world points to screen coordinates (the shared hot path
-//|     of the pseudo-3D helpers - project a box's corners, then fill triangles).
+//|     """Batch-project ``n`` 3D world points to screen coordinates.
 //|
-//|     ``cam`` holds 15 camera parameters (eye x/y/z, right x/z, up x/y/z,
-//|     forward x/y/z, focal, screen centre x/y, near); ``pts`` holds ``n*3`` world
-//|     coordinates. Screen x/y land in the ``int16`` buffers ``out_sx``/``out_sy``;
-//|     a point behind the near plane gets the sentinel ``-32768``. On an FPU build
-//|     (``picogame.FPU`` is 1) ``cam``/``pts`` are ``float32``, otherwise 16.16
-//|     fixed-point ``int32``."""
+//|     When :py:data:`FPU` is ``1``, ``cam`` and ``pts`` hold ``float32`` elements;
+//|     otherwise they hold signed 16.16 fixed-point ``int32`` elements.
+//|
+//|     :param ~circuitpython_typing.ReadableBuffer cam: 15 camera parameters, in order:
+//|         eye x/y/z, right x/z, up x/y/z, forward x/y/z, focal length, screen center
+//|         x/y, near-plane distance
+//|     :param ~circuitpython_typing.ReadableBuffer pts: ``3 * n`` world coordinates
+//|         (x, y, z per point)
+//|     :param int n: number of points
+//|     :param ~circuitpython_typing.WriteableBuffer out_sx: at least ``n`` ``int16``
+//|         values; receives screen x, or the sentinel ``-32768`` for a point behind
+//|         the near plane
+//|     :param ~circuitpython_typing.WriteableBuffer out_sy: at least ``n`` ``int16``
+//|         values; receives screen y, or ``-32768`` for a point behind the near plane"""
 //|     ...
 //|
 // project(cam, pts, n, out_sx, out_sy) - batch perspective projection of `n` 3D points to screen.
@@ -472,10 +566,15 @@ static mp_obj_t picogame_project(size_t n_args, const mp_obj_t *args) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(picogame_project_obj, 5, 5, picogame_project);
 
-//| def invert(display: busdisplay.BusDisplay, on: bool) -> None:
-//|     """Toggle the panel's hardware colour inversion (INVON/INVOFF). Instant and sends NO
-//|     pixel data, so a brief invert is a FREE full-screen flash (a 1-bit negative 'hit' look)
-//|     - cheaper than a Fade overlay. ST7789/ST7735 support it."""
+//| def invert(
+//|     display: Union[Display, busdisplay.BusDisplay, Framebuffer], on: bool
+//| ) -> None:
+//|     """Enable or disable color inversion.
+//|
+//|     Bus displays receive the controller's inversion command (INVON/INVOFF), which
+//|     takes effect immediately and sends no pixel data; the controller must support
+//|     it (ST7789 and ST7735 do). A `Framebuffer` target is instead inverted during
+//|     composition, starting with the next refresh."""
 //|     ...
 static mp_obj_t picogame_invert(mp_obj_t display_in, mp_obj_t on_in) {
     #if CIRCUITPY_PICOGAME_FRAMEBUFFER
@@ -495,9 +594,9 @@ static mp_obj_t picogame_invert(mp_obj_t display_in, mp_obj_t on_in) {
 static MP_DEFINE_CONST_FUN_OBJ_2(picogame_invert_obj, picogame_invert);
 
 //| def render(
-//|     display: busdisplay.BusDisplay,
-//|     sprites: List[Sprite],
-//|     buffer: WriteableBuffer,
+//|     display: Union[Display, busdisplay.BusDisplay, Framebuffer],
+//|     layers: List[Union[Sprite, Tilemap, Canvas, Particles, StripDraw, Triangles]],
+//|     buffer: Optional[WriteableBuffer],
 //|     x0: int,
 //|     y0: int,
 //|     x1: int,
@@ -505,8 +604,19 @@ static MP_DEFINE_CONST_FUN_OBJ_2(picogame_invert_obj, picogame_invert);
 //|     *,
 //|     background: int = 0,
 //| ) -> None:
-//|     """Render ``sprites`` into the screen region [x0,x1) x [y0,y1) and push it
-//|     to ``display``. ``buffer`` is a reusable strip buffer (>= region_width*2 bytes)."""
+//|     """Render ``layers`` into the screen region from ``(x0, y0)`` up to, but not
+//|     including, ``(x1, y1)``, and push it to ``display``, without a `Scene`.
+//|
+//|     :param display: the render target
+//|     :param layers: layers of any kind, drawn bottom to top
+//|     :param ~circuitpython_typing.WriteableBuffer buffer: a reusable strip buffer of
+//|         at least ``(x1 - x0) * 2`` bytes; ignored (may be `None`) on a
+//|         `Framebuffer` target
+//|     :param int x0: left edge of the region
+//|     :param int y0: top edge of the region
+//|     :param int x1: right edge of the region (exclusive)
+//|     :param int y1: bottom edge of the region (exclusive)
+//|     :param int background: color the region is cleared to first"""
 //|     ...
 
 // Map a layer object to its PICOGAME_KIND_*, or raise the one shared TypeError. Both
@@ -636,12 +746,16 @@ static MP_DEFINE_CONST_FUN_OBJ_KW(picogame_render_obj, 7, picogame_render_fun);
 //| def collide(
 //|     x1: int, y1: int, x2: int, y2: int, ax1: int, ay1: int, ax2: int = ..., ay2: int = ...
 //| ) -> bool:
-//|     """AABB overlap test with INCLUSIVE bounds - both corners are part of the box, so two
-//|     boxes collide the moment they TOUCH (no visible overlap, no gap). Pass sprite hitboxes
-//|     as (x, y, x+w, y+h): collision fires on contact, the usual game feel. With 8 args: box
-//|     (x1,y1,x2,y2) vs box (ax1,ay1,ax2,ay2). With 6 args: box vs point (ax1, ay1).
-//|     NOTE: this is intentionally inclusive, unlike render's half-open [x0,x1) pixel ranges -
-//|     render is about pixels, collide is about game hitboxes (touch = hit)."""
+//|     """Return whether an inclusive rectangle overlaps another rectangle or contains
+//|     a point. Both corners are part of the rectangle, so touching edges count as an
+//|     overlap.
+//|
+//|     With six arguments, test rectangle ``(x1, y1, x2, y2)`` against the point
+//|     ``(ax1, ay1)``. With eight arguments, test it against the rectangle
+//|     ``(ax1, ay1, ax2, ay2)``. Seven arguments are not accepted.
+//|
+//|     Unlike the pixel regions used by `render`, whose upper bounds are excluded,
+//|     collision bounds are inclusive."""
 //|     ...
 static mp_obj_t picogame_collide(size_t n_args, const mp_obj_t *args) {
     int x1 = mp_obj_get_int(args[0]);
@@ -704,7 +818,7 @@ static float pg_value1d(float x, int32_t seed) {
 }
 
 //| def value2d(x: float, y: float, *, seed: int = 0) -> float:
-//|     """Smooth 2-D value noise in 0..1 (fast C)."""
+//|     """Smooth 2-D value noise in ``0..1``."""
 //|     ...
 static mp_obj_t picogame_value2d(size_t n_args, const mp_obj_t *pos, mp_map_t *kw) {
     static const mp_arg_t spec[] = { {MP_QSTR_x, MP_ARG_REQUIRED | MP_ARG_OBJ, {.u_obj = MP_OBJ_NULL}},
@@ -715,7 +829,9 @@ static mp_obj_t picogame_value2d(size_t n_args, const mp_obj_t *pos, mp_map_t *k
 }
 static MP_DEFINE_CONST_FUN_OBJ_KW(picogame_value2d_obj, 2, picogame_value2d);
 
-//| def value1d(x: float, *, seed: int = 0) -> float: ...
+//| def value1d(x: float, *, seed: int = 0) -> float:
+//|     """Smooth 1-D value noise in ``0..1``."""
+//|     ...
 static mp_obj_t picogame_value1d(size_t n_args, const mp_obj_t *pos, mp_map_t *kw) {
     static const mp_arg_t spec[] = { {MP_QSTR_x, MP_ARG_REQUIRED | MP_ARG_OBJ, {.u_obj = MP_OBJ_NULL}},
                                      {MP_QSTR_seed, MP_ARG_INT, {.u_int = 0}} };
@@ -737,7 +853,10 @@ static const mp_arg_t pg_fbm2d_args[] = {
 };
 
 #if 0   // float reference fbm - superseded by the fixed-point path below
-//| def fbm2d(x: float, y: float, *, octaves: int = 4, seed: int = 0, lacunarity: float = 2.0, gain: float = 0.5) -> float: ...
+//| def fbm2d(x: float, y: float, *, octaves: int = 4, seed: int = 0, lacunarity: float = 2.0, gain: float = 0.5) -> float:
+//|     """Fractal (fBm) 2-D noise in ``0..1``: ``octaves`` layers of :py:func:`value2d`, each
+//|     ``lacunarity`` times finer and ``gain`` times weaker than the last."""
+//|     ...
 static mp_obj_t picogame_fbm2d(size_t n_args, const mp_obj_t *pos, mp_map_t *kw) {
     mp_arg_val_t a[6];
     mp_arg_parse_all(n_args, pos, kw, 6, pg_fbm2d_args, a);
@@ -757,7 +876,12 @@ static mp_obj_t picogame_fbm2d(size_t n_args, const mp_obj_t *pos, mp_map_t *kw)
 }
 static MP_DEFINE_CONST_FUN_OBJ_KW(picogame_fbm2d_obj, 2, picogame_fbm2d);
 
-//| def fbm1d(x: float, *, octaves: int = 4, seed: int = 0, lacunarity: float = 2.0, gain: float = 0.5) -> float: ...
+//| def fbm1d(x: float, *, octaves: int = 4, seed: int = 0, lacunarity: float = 2.0, gain: float = 0.5) -> float:
+//|     """Fractal (fBm) 1-D noise in ``0..1``: the :py:func:`fbm2d` layering applied
+//|     to :py:func:`value1d`."""
+//|     ...
+//|
+//|
 static mp_obj_t picogame_fbm1d(size_t n_args, const mp_obj_t *pos, mp_map_t *kw) {
     static const mp_arg_t spec[] = { {MP_QSTR_x, MP_ARG_REQUIRED | MP_ARG_OBJ, {.u_obj = MP_OBJ_NULL}},
                                      {MP_QSTR_octaves, MP_ARG_INT, {.u_int = 4}}, {MP_QSTR_seed, MP_ARG_INT, {.u_int = 0}},

@@ -25,6 +25,49 @@
 #include "shared-module/picogame/Bitmap.h"
 #include "shared-module/picogame/Sprite.h"
 
+// ---------------------------------------------------------------------------
+// Bitmap
+// ---------------------------------------------------------------------------
+
+//| class Bitmap:
+//|     """An image atlas of one or more equal-size frames, of arbitrary size.
+//|     Pixel data and palette entries must be in the display's transfer byte
+//|     order; use :py:func:`rgb565` to build colors.
+//|
+//|     The bitmap references the caller-provided data without copying or modifying
+//|     it. The backing buffer may live in RAM or in read-only memory."""
+//|
+//|     def __init__(
+//|         self,
+//|         data: ReadableBuffer,
+//|         width: int,
+//|         height: int,
+//|         *,
+//|         format: int = RGB565,
+//|         palette: Optional[ReadableBuffer] = None,
+//|         frames: int = 1,
+//|         stride: int = 0,
+//|         transparent: Optional[int] = None,
+//|     ) -> None:
+//|         """:param ~circuitpython_typing.ReadableBuffer data: pixel data in the
+//|             display's transfer byte order
+//|         :param int width: width of one frame in pixels
+//|         :param int height: height of one frame in pixels
+//|         :param int format: :py:data:`RGB565` (2 bytes per pixel) or :py:data:`PAL8`
+//|             (1 byte per pixel, indexing ``palette``)
+//|         :param ~circuitpython_typing.ReadableBuffer palette: for ``PAL8``, a buffer
+//|             of transfer-order RGB565 colors, two bytes per entry. Every byte in
+//|             ``data`` must be a valid palette index, that is, less than
+//|             ``len(palette) // 2``.
+//|         :param int frames: number of equal-size frames, laid out left to right in
+//|             one horizontal atlas
+//|         :param int stride: distance between two rows in pixels. Defaults to
+//|             ``width * frames``; set explicitly to reference a sub-region of a
+//|             wider image.
+//|         :param int transparent: color (``RGB565``) or index (``PAL8``) that is
+//|             skipped when drawing. Defaults to `None`, fully opaque."""
+//|         ...
+//|
 static mp_obj_t picogame_bitmap_make_new(const mp_obj_type_t *type, size_t n_args,
     size_t n_kw, const mp_obj_t *all_args) {
     enum { ARG_data, ARG_width, ARG_height, ARG_format, ARG_palette, ARG_frames, ARG_stride, ARG_transparent };
@@ -115,10 +158,13 @@ static mp_obj_t picogame_bitmap_make_new(const mp_obj_type_t *type, size_t n_arg
     return MP_OBJ_FROM_PTR(self);
 }
 
+//|
 //|     width: int
+//|     """Width of one frame in pixels. (read-only)"""
 //|     height: int
+//|     """Height of one frame in pixels. (read-only)"""
 //|     frames: int
-//|     """Frame dimensions and frame count (read-only)."""
+//|     """Number of frames in the atlas. (read-only)"""
 static mp_obj_t bitmap_get_width(mp_obj_t self_in) {
     return MP_OBJ_NEW_SMALL_INT(((picogame_bitmap_obj_t *)MP_OBJ_TO_PTR(self_in))->width);
 }
@@ -138,7 +184,7 @@ static MP_DEFINE_CONST_FUN_OBJ_1(bitmap_get_frames_obj, bitmap_get_frames);
 MP_PROPERTY_GETTER(bitmap_frames_obj, (mp_obj_t)&bitmap_get_frames_obj);
 
 //|     format: int
-//|     """RGB565 or PAL8 (read-only)."""
+//|     """:py:data:`RGB565` or :py:data:`PAL8`. (read-only)"""
 static mp_obj_t bitmap_get_format(mp_obj_t self_in) {
     return MP_OBJ_NEW_SMALL_INT(((picogame_bitmap_obj_t *)MP_OBJ_TO_PTR(self_in))->format);
 }
@@ -146,7 +192,7 @@ static MP_DEFINE_CONST_FUN_OBJ_1(bitmap_get_format_obj, bitmap_get_format);
 MP_PROPERTY_GETTER(bitmap_format_obj, (mp_obj_t)&bitmap_get_format_obj);
 
 //|     stride: int
-//|     """Row stride in pixels (read-only)."""
+//|     """Row stride in pixels. (read-only)"""
 static mp_obj_t bitmap_get_stride(mp_obj_t self_in) {
     return MP_OBJ_NEW_SMALL_INT(((picogame_bitmap_obj_t *)MP_OBJ_TO_PTR(self_in))->stride);
 }
@@ -154,8 +200,8 @@ static MP_DEFINE_CONST_FUN_OBJ_1(bitmap_get_stride_obj, bitmap_get_stride);
 MP_PROPERTY_GETTER(bitmap_stride_obj, (mp_obj_t)&bitmap_get_stride_obj);
 
 //|     palette: Optional[ReadableBuffer]
-//|     """The PAL8 palette buffer this Bitmap was built with, or None for RGB565
-//|     (read-only). Lets palette helpers read it back instead of holding a sidecar ref."""
+//|     """The ``PAL8`` palette buffer this Bitmap was built with, or `None` for
+//|     ``RGB565``. (read-only)"""
 static mp_obj_t bitmap_get_palette(mp_obj_t self_in) {
     picogame_bitmap_obj_t *self = MP_OBJ_TO_PTR(self_in);
     return (self->palette_obj == MP_OBJ_NULL) ? mp_const_none : self->palette_obj;
@@ -164,7 +210,10 @@ static MP_DEFINE_CONST_FUN_OBJ_1(bitmap_get_palette_obj, bitmap_get_palette);
 MP_PROPERTY_GETTER(bitmap_palette_obj, (mp_obj_t)&bitmap_get_palette_obj);
 
 //|     transparent: Optional[int]
-//|     """The transparent color/index, or None if the Bitmap is fully opaque (read-only)."""
+//|     """The transparent color or index, or `None` if the Bitmap is fully
+//|     opaque. (read-only)"""
+//|
+//|
 static mp_obj_t bitmap_get_transparent(mp_obj_t self_in) {
     picogame_bitmap_obj_t *self = MP_OBJ_TO_PTR(self_in);
     return self->has_transparent ? MP_OBJ_NEW_SMALL_INT(self->transparent) : mp_const_none;

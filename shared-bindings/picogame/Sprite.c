@@ -29,52 +29,11 @@
 // Sprite
 // ---------------------------------------------------------------------------
 
-// ---------------------------------------------------------------------------
-// Bitmap
-// ---------------------------------------------------------------------------
-
-//| class Bitmap:
-//|     """An image atlas of one or more equal-size frames, of arbitrary size.
-//|
-//|     Unlike ``_stage`` (fixed 16x16 tiles), frames may be any width/height.
-//|     Pixel data and palette entries must be in the display's wire byte order
-//|     (use :py:func:`picogame.rgb565` to build colors)."""
-//|
-//|     def __init__(
-//|         self,
-//|         data: ReadableBuffer,
-//|         width: int,
-//|         height: int,
-//|         *,
-//|         format: int = RGB565,
-//|         palette: Optional[ReadableBuffer] = None,
-//|         frames: int = 1,
-//|         stride: int = 0,
-//|         transparent: Optional[int] = None,
-//|     ) -> None: ...
 // Int pixel/scale -> 24.8 fixed-point. Shift through unsigned so a wild coordinate (e.g. 100_000_000,
 // in 32-bit mp_int range but not after <<8) wraps modularly instead of hitting signed-overflow UB.
 // Costs nothing over a plain shift; for any real on-screen coordinate the result is identical.
 static int32_t pg_int_to_fp8(mp_int_t v) {
     return (int32_t)((uint32_t)v << 8);
-}
-
-// shadow / flash / dither are mutually exclusive (one blit effect at a time); setting one ON
-// clears the others, so "the last effect you set wins". Turning one OFF clears ONLY its own flag,
-// so clearing an effect you never enabled (e.g. spr.flash = 0) can't wipe a different active one.
-#define PICOGAME_SPR_FX_MASK (PICOGAME_SPR_SHADOW | PICOGAME_SPR_FLASH | PICOGAME_SPR_DITHER | PICOGAME_SPR_TINT)
-static void set_effect(picogame_sprite_obj_t *self, uint8_t flag, bool on) {
-    if (on) {
-        self->flags = (uint8_t)((self->flags & ~PICOGAME_SPR_FX_MASK) | flag);
-    } else {
-        self->flags &= (uint8_t) ~flag;
-    }
-}
-
-// Round a float to 24.8 fixed-point (shared by the position/scale/anchor setters so the soft-float
-// round sequence is emitted once, not per call site).
-static int32_t pg_round_fp8(mp_float_t f) {
-    return (int32_t)(f * 256 + (f >= 0 ? (mp_float_t)0.5 : (mp_float_t)-0.5));
 }
 
 //| class Sprite:
@@ -90,7 +49,15 @@ static int32_t pg_round_fp8(mp_float_t f) {
 //|         visible: bool = True,
 //|         flip_x: bool = False,
 //|         flip_y: bool = False,
-//|     ) -> None: ...
+//|     ) -> None:
+//|         """Place frame ``frame`` of ``bitmap`` at (``x``, ``y``) - the top-left corner, in
+//|         world pixels, so a sprite on a scrolling layer moves with the view.
+//|
+//|         ``visible=False`` creates the sprite without drawing it, for example to
+//|         pre-allocate a pool of sprites up front. ``flip_x`` and ``flip_y`` mirror
+//|         the frame at draw time."""
+//|         ...
+//|
 static mp_obj_t picogame_sprite_make_new(const mp_obj_type_t *type, size_t n_args,
     size_t n_kw, const mp_obj_t *all_args) {
     enum { ARG_bitmap, ARG_x, ARG_y, ARG_frame, ARG_visible, ARG_flip_x, ARG_flip_y };
@@ -135,6 +102,25 @@ static void set_flag(picogame_sprite_obj_t *self, uint8_t flag, bool on) {
     }
 }
 
+// shadow / flash / dither are mutually exclusive (one blit effect at a time); setting one ON
+// clears the others, so "the last effect you set wins". Turning one OFF clears ONLY its own flag,
+// so clearing an effect you never enabled (e.g. spr.flash = 0) can't wipe a different active one.
+#define PICOGAME_SPR_FX_MASK (PICOGAME_SPR_SHADOW | PICOGAME_SPR_FLASH | PICOGAME_SPR_DITHER | PICOGAME_SPR_TINT)
+static void set_effect(picogame_sprite_obj_t *self, uint8_t flag, bool on) {
+    if (on) {
+        self->flags = (uint8_t)((self->flags & ~PICOGAME_SPR_FX_MASK) | flag);
+    } else {
+        self->flags &= (uint8_t) ~flag;
+    }
+}
+
+// Round a float to 24.8 fixed-point (shared by the position/scale/anchor setters so the soft-float
+// round sequence is emitted once, not per call site).
+static int32_t pg_round_fp8(mp_float_t f) {
+    return (int32_t)(f * 256 + (f >= 0 ? (mp_float_t)0.5 : (mp_float_t)-0.5));
+}
+
+
 // Accept an int or float and store as 24.8 fixed-point (rounded). Integer fast path avoids
 // software float on RP2040 - game code sets x/y (via move/setters) every frame, usually with ints.
 static int32_t obj_to_fp(mp_obj_t o) {
@@ -145,20 +131,27 @@ static int32_t obj_to_fp(mp_obj_t o) {
     return pg_round_fp8(f);
 }
 
+//|
 //|     frame: int
-//|     """Which frame of the bitmap's atlas to draw (0-based) - animation = stepping this."""
+//|     """Which frame of the bitmap's atlas to draw, starting at 0. Stepping this
+//|     animates the sprite."""
 //|     visible: bool
-//|     """False hides the sprite (it stays in the scene; the area under it repaints)."""
+//|     """`False` hides the sprite. It stays in the scene and the area under it
+//|     repaints."""
 //|     flip_x: bool
+//|     """Mirror the frame horizontally at draw time."""
 //|     flip_y: bool
-//|     """Mirror the frame horizontally / vertically at draw time (free on the fast path)."""
+//|     """Mirror the frame vertically at draw time."""
 //|     x: int
+//|     """Horizontal pixel position in scene coordinates. Setting accepts a float
+//|     for sub-pixel placement; reading returns the floored pixel."""
 //|     y: int
-//|     """Integer pixel position (scene coords). Setting accepts a float for
-//|     sub-pixel placement; reading returns the floored pixel."""
+//|     """Vertical pixel position in scene coordinates. Setting accepts a float
+//|     for sub-pixel placement; reading returns the floored pixel."""
 //|     fx: float
+//|     """Horizontal sub-pixel position, for example ``sprite.fx += 2.4``."""
 //|     fy: float
-//|     """Sub-pixel position (use for smooth physics: e.g. ``sprite.fx += 2.4``)."""
+//|     """Vertical sub-pixel position, for example ``sprite.fy += 2.4``."""
 // FLASH NOTE (property objects vs. a single `attr` handler): Sprite (and the other property-dense
 // types) expose each attribute as its own getter/setter + MP_PROPERTY object below - the standard
 // CircuitPython shared-bindings idiom (~423 such uses across CP). Collapsing these onto ONE `attr`
@@ -249,8 +242,8 @@ static MP_DEFINE_CONST_FUN_OBJ_2(sprite_set_flip_y_obj, sprite_set_flip_y);
 MP_PROPERTY_GETSET(sprite_flip_y_obj, (mp_obj_t)&sprite_get_flip_y_obj, (mp_obj_t)&sprite_set_flip_y_obj);
 
 //|     scale: float
-//|     """Uniform draw scale (nearest-neighbour). 1.0 = native (fast path); 2.0 = double
-//|     size, fractional values are allowed (e.g. a powerup grow tween). Anchor stays put."""
+//|     """Uniform draw scale using nearest-neighbor sampling. ``1.0`` is native size;
+//|     fractional values are allowed. The anchor point stays put."""
 static mp_obj_t sprite_get_scale(mp_obj_t self_in) {
     return mp_obj_new_float(((picogame_sprite_obj_t *)MP_OBJ_TO_PTR(self_in))->scale * (mp_float_t)(1.0 / 256.0));
 }
@@ -278,8 +271,8 @@ static MP_DEFINE_CONST_FUN_OBJ_2(sprite_set_scale_obj, sprite_set_scale);
 MP_PROPERTY_GETSET(sprite_scale_obj, (mp_obj_t)&sprite_get_scale_obj, (mp_obj_t)&sprite_set_scale_obj);
 
 //|     angle: float
-//|     """Rotation in degrees about the anchor (0 = none, the fast path). Nearest-neighbour,
-//|     so integer scales stay crisp; rotation shimmers slightly (pixel-art trade-off)."""
+//|     """Rotation in degrees about the anchor; ``0`` is unrotated. Values are stored
+//|     as whole degrees. Rotation uses nearest-neighbor sampling."""
 static mp_obj_t sprite_get_angle(mp_obj_t self_in) {
     return mp_obj_new_float((mp_float_t)((picogame_sprite_obj_t *)MP_OBJ_TO_PTR(self_in))->angle);
 }
@@ -302,9 +295,9 @@ static MP_DEFINE_CONST_FUN_OBJ_2(sprite_set_angle_obj, sprite_set_angle);
 MP_PROPERTY_GETSET(sprite_angle_obj, (mp_obj_t)&sprite_get_angle_obj, (mp_obj_t)&sprite_set_angle_obj);
 
 //|     shadow: bool
-//|     """Draw opaque pixels as a darkened destination instead of colour - a drop-shadow
-//|     silhouette (offset copy below the sprite) or a dim overlay (a solid sprite scaled
-//|     over a dialog/pause area)."""
+//|     """Draw opaque pixels by darkening the destination instead of writing color,
+//|     producing a shadow silhouette or a dimming overlay. Mutually exclusive with
+//|     `flash`, `dither` and `tint`."""
 static mp_obj_t sprite_get_shadow(mp_obj_t self_in) {
     return mp_obj_new_bool((((picogame_sprite_obj_t *)MP_OBJ_TO_PTR(self_in))->flags & PICOGAME_SPR_SHADOW) != 0);
 }
@@ -317,9 +310,9 @@ static MP_DEFINE_CONST_FUN_OBJ_2(sprite_set_shadow_obj, sprite_set_shadow);
 MP_PROPERTY_GETSET(sprite_shadow_obj, (mp_obj_t)&sprite_get_shadow_obj, (mp_obj_t)&sprite_set_shadow_obj);
 
 //|     flash: int
-//|     """Draw opaque pixels as a solid colour (a wire-order RGB565 int from rgb565) instead
-//|     of their own colour - a hit-flash or tint. Set to a colour to enable, 0/False to turn
-//|     off. Pulse it for 1-3 frames on impact. Mutually exclusive with shadow/dither."""
+//|     """Draw opaque pixels as one solid color instead of their own, for example as
+//|     a brief hit flash. Set to a color from :py:func:`rgb565` to enable, ``0`` to
+//|     disable. Mutually exclusive with `shadow`, `dither` and `tint`."""
 static mp_obj_t sprite_get_flash(mp_obj_t self_in) {
     picogame_sprite_obj_t *s = MP_OBJ_TO_PTR(self_in);
     return MP_OBJ_NEW_SMALL_INT((s->flags & PICOGAME_SPR_FLASH) ? s->flash_color : 0);
@@ -341,9 +334,9 @@ static MP_DEFINE_CONST_FUN_OBJ_2(sprite_set_flash_obj, sprite_set_flash);
 MP_PROPERTY_GETSET(sprite_flash_obj, (mp_obj_t)&sprite_get_flash_obj, (mp_obj_t)&sprite_set_flash_obj);
 
 //|     dither: int
-//|     """Fake transparency via an ordered (Bayer) dither, no alpha blending: 0 = opaque
-//|     (off), 8 = ~50% see-through, 16 = invisible. A classic 1-bit look - for ghosts,
-//|     fading/spawning enemies, fog, force fields. Mutually exclusive with shadow/flash."""
+//|     """Approximate transparency with an ordered (Bayer) dither pattern; there is
+//|     no alpha blending. ``0`` is opaque (off), ``8`` is about half transparent and
+//|     ``16`` is invisible. Mutually exclusive with `shadow`, `flash` and `tint`."""
 static mp_obj_t sprite_get_dither(mp_obj_t self_in) {
     picogame_sprite_obj_t *s = MP_OBJ_TO_PTR(self_in);
     return MP_OBJ_NEW_SMALL_INT((s->flags & PICOGAME_SPR_DITHER) ? s->dither : 0);
@@ -366,10 +359,9 @@ static MP_DEFINE_CONST_FUN_OBJ_2(sprite_set_dither_obj, sprite_set_dither);
 MP_PROPERTY_GETSET(sprite_dither_obj, (mp_obj_t)&sprite_get_dither_obj, (mp_obj_t)&sprite_set_dither_obj);
 
 //|     tint: int
-//|     """Multiply opaque pixels by a colour (wire-order RGB565 from rgb565), keeping the
-//|     sprite's shading - coloured lighting, a red damage flush, a blue freeze, a power-up
-//|     glow. Unlike `flash` (flat replace) `tint` preserves detail. 0/False = off. Mutually
-//|     exclusive with shadow/flash/dither."""
+//|     """Multiply opaque pixels by a color from :py:func:`rgb565`, preserving the
+//|     sprite's shading (unlike `flash`, which replaces it). ``0`` disables. Mutually
+//|     exclusive with `shadow`, `flash` and `dither`."""
 static mp_obj_t sprite_get_tint(mp_obj_t self_in) {
     picogame_sprite_obj_t *s = MP_OBJ_TO_PTR(self_in);
     return MP_OBJ_NEW_SMALL_INT((s->flags & PICOGAME_SPR_TINT) ? s->flash_color : 0);
@@ -389,10 +381,11 @@ static MP_DEFINE_CONST_FUN_OBJ_2(sprite_set_tint_obj, sprite_set_tint);
 MP_PROPERTY_GETSET(sprite_tint_obj, (mp_obj_t)&sprite_get_tint_obj, (mp_obj_t)&sprite_set_tint_obj);
 
 //|     transpose: bool
-//|     """Swap the sprite's X/Y axes - a cheap 90deg turn (no shimmer, unlike `angle`).
-//|     Combined with `flip_x`/`flip_y` it gives all 8 orientations for free. Only on the fast
-//|     path (scale 1.0, angle 0); for rotation WITH scaling use `angle`. The drawn footprint
-//|     swaps width/height."""
+//|     """Swap the sprite's x and y axes, turning the frame by 90 degrees without
+//|     resampling. Combined with `flip_x` and `flip_y` this yields all 8
+//|     orientations. Applies only at ``scale == 1.0`` and ``angle == 0``; for
+//|     rotation combined with scaling use `angle`. The drawn footprint swaps
+//|     width and height."""
 static mp_obj_t sprite_get_transpose(mp_obj_t self_in) {
     return mp_obj_new_bool((((picogame_sprite_obj_t *)MP_OBJ_TO_PTR(self_in))->flags & PICOGAME_SPR_TRANSPOSE) != 0);
 }
@@ -418,9 +411,9 @@ static MP_DEFINE_CONST_FUN_OBJ_2(sprite_set_data_obj, sprite_set_data);
 MP_PROPERTY_GETSET(sprite_data_obj, (mp_obj_t)&sprite_get_data_obj, (mp_obj_t)&sprite_set_data_obj);
 
 //|     bitmap: Bitmap
-//|     """The sprite's source bitmap. Assigning a new one swaps graphics and may
-//|     change size; the scene repaints both the old and new bounds next refresh
-//|     (e.g. powerups, resizable HUD bars, text labels)."""
+//|     """The sprite's source bitmap. Assigning a new one swaps the graphics and may
+//|     change the sprite's size; the scene repaints both the old and new bounds on
+//|     the next refresh."""
 static mp_obj_t sprite_get_bitmap(mp_obj_t self_in) {
     picogame_sprite_obj_t *self = MP_OBJ_TO_PTR(self_in);
     return self->bitmap != NULL ? MP_OBJ_FROM_PTR(self->bitmap) : mp_const_none;
@@ -441,6 +434,7 @@ MP_PROPERTY_GETSET(sprite_bitmap_obj, (mp_obj_t)&sprite_get_bitmap_obj, (mp_obj_
 //|     ``(0.5, 0.5)`` = center, ``(0.5, 1.0)`` = bottom-center. ``x``/``y`` then
 //|     refer to this point, so rotating frames or swapping to a different size
 //|     stays aligned. Stored in 1/256 steps."""
+//|
 static mp_obj_t sprite_get_anchor(mp_obj_t self_in) {
     picogame_sprite_obj_t *self = MP_OBJ_TO_PTR(self_in);
     mp_obj_t t[2] = {
@@ -469,9 +463,10 @@ static mp_obj_t sprite_set_anchor(mp_obj_t self_in, mp_obj_t v) {
 static MP_DEFINE_CONST_FUN_OBJ_2(sprite_set_anchor_obj, sprite_set_anchor);
 MP_PROPERTY_GETSET(sprite_anchor_obj, (mp_obj_t)&sprite_get_anchor_obj, (mp_obj_t)&sprite_set_anchor_obj);
 
-//|     def move(self, x: int, y: int) -> None:
-//|         """Set the sprite position."""
+//|     def move(self, x: float, y: float) -> None:
+//|         """Set the sprite position. Accepts floats for sub-pixel placement."""
 //|         ...
+//|
 static mp_obj_t sprite_move(mp_obj_t self_in, mp_obj_t x_in, mp_obj_t y_in) {
     picogame_sprite_obj_t *self = MP_OBJ_TO_PTR(self_in);
     self->x = obj_to_fp(x_in);
@@ -481,11 +476,12 @@ static mp_obj_t sprite_move(mp_obj_t self_in, mp_obj_t x_in, mp_obj_t y_in) {
 static MP_DEFINE_CONST_FUN_OBJ_3(sprite_move_obj, sprite_move);
 
 //|     def touch(self) -> None:
-//|         """Force this sprite to repaint on the next ``Scene.refresh()`` even though none
-//|         of its tracked properties (position, frame, scale, angle, bitmap) changed. Call
-//|         it after mutating the sprite's bitmap pixels IN PLACE (e.g. streaming a new frame
-//|         into the same buffer), which the dirty-rect tracker can't otherwise detect."""
+//|         """Force this sprite to repaint on the next :py:meth:`Scene.refresh` even
+//|         though none of its tracked properties (position, frame, scale, angle,
+//|         bitmap) changed. Call it after mutating the bitmap's backing buffer in
+//|         place, which the dirty-region tracking cannot otherwise detect."""
 //|         ...
+//|
 static mp_obj_t sprite_touch(mp_obj_t self_in) {
     ((picogame_sprite_obj_t *)MP_OBJ_TO_PTR(self_in))->seq++;
     return mp_const_none;
@@ -519,13 +515,18 @@ static void pg_obj_to_box(mp_obj_t o, int *x1, int *y1, int *x2, int *y2) {
         MP_QSTR_other, MP_QSTR_Sprite, MP_QSTR_tuple, mp_obj_get_type(o)->name);
 }
 
-//|     def overlaps(self, other: "Sprite | tuple", inset: int = 0) -> bool:
-//|         """True if this sprite's drawn box overlaps `other` - an inclusive AABB, so they
-//|         collide the moment they touch. `other` may be another Sprite, a point `(x, y)`,
-//|         or a rect `(x1, y1, x2, y2)` (e.g. a trigger zone or the screen for culling).
-//|         The box is anchor/scale/rotation aware. `inset` shrinks THIS sprite's box by N px
-//|         on each side, for a fair hitbox smaller than the art."""
+//|     def overlaps(
+//|         self,
+//|         other: Union[Sprite, Tuple[int, int], Tuple[int, int, int, int]],
+//|         inset: int = 0,
+//|     ) -> bool:
+//|         """Return `True` if this sprite's drawn rectangle overlaps ``other``. Bounds
+//|         are inclusive, so touching edges count as an overlap. ``other`` may be
+//|         another `Sprite`, a point ``(x, y)`` or a rectangle ``(x1, y1, x2, y2)``.
+//|         The rectangle accounts for anchor, scale and rotation. ``inset`` shrinks
+//|         this sprite's rectangle by that many pixels on each side."""
 //|         ...
+//|
 static mp_obj_t sprite_overlaps(size_t n_args, const mp_obj_t *pos_args, mp_map_t *kw_args) {
     enum { ARG_other, ARG_inset };
     static const mp_arg_t allowed[] = {
@@ -544,12 +545,13 @@ static mp_obj_t sprite_overlaps(size_t n_args, const mp_obj_t *pos_args, mp_map_
 }
 static MP_DEFINE_CONST_FUN_OBJ_KW(sprite_overlaps_obj, 2, sprite_overlaps);
 
-//|     def near(self, other: "Sprite | tuple", r: int) -> bool:
-//|         """True if this sprite's centre is within `r` pixels of `other`'s centre (squared
-//|         distance, no sqrt) - the round/forgiving test for bullets, pickups, explosions.
-//|         `other` may be a Sprite or a point `(x, y)`. Centres come from the drawn box, so
-//|         it is anchor aware."""
+//|     def near(self, other: Union[Sprite, Tuple[int, int]], r: int) -> bool:
+//|         """Return `True` when the distance between centers is less than ``r``
+//|         pixels. ``other`` may be a `Sprite` or a point ``(x, y)``. Centers come
+//|         from the drawn rectangle, so the test accounts for the anchor."""
 //|         ...
+//|
+//|
 static mp_obj_t sprite_near(mp_obj_t self_in, mp_obj_t other_in, mp_obj_t r_in) {
     int ax1, ay1, ax2, ay2;
     picogame_sprite_aabb(MP_OBJ_TO_PTR(self_in), &ax1, &ay1, &ax2, &ay2);
