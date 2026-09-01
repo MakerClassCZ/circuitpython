@@ -619,6 +619,53 @@ static MP_DEFINE_CONST_FUN_OBJ_KW(picogame_fbm1d_fx_obj, 1, picogame_fbm1d_fx);
 //   out_sx/out_sy = int16 screen coords; a point behind the near plane gets sentinel -32768
 // On an FPU board (CIRCUITPY_PICOGAME_FPU) cam/pts are float32; else they are 16.16 fixed int32.
 // This is the shared hot path for blocky pseudo-3D (project the 8 corners of each box, then fill).
+
+#if CIRCUITPY_PICOGAME_FPU && defined(__XTENSA__) && defined(XCHAL_HAVE_FP_DIV) && XCHAL_HAVE_FP_DIV
+// GCC's xtensa backend has no divsf3 pattern at ANY optimisation level, so `a / b` compiles to a
+// __divsf3 LIBCALL - and the caller spills every live f-register around the call, once per point
+// (measured 2026-09-01 on ESP32-S3: 20-30% of the whole projection loop; libgcc's __divsf3
+// internally IS the FPU divide-assist sequence, so the call+spill is pure overhead). Inlining the
+// same ISA-documented divide sequence (div0/nexp01/maddn/mkdadj/addexp/divn, per the Xtensa ISA
+// reference) keeps the numerics IEEE-identical and lets GCC keep the surrounding loop in
+// registers. The divide-assist state ops stay inside ONE asm block, so nothing can interleave.
+static inline float pg_fdiv(float num, float den) {
+    float q, e, t, cst, r0, r1, adj, nmant;
+    __asm__ (
+        "div0.s    %[r0], %[den]\n\t"
+        "nexp01.s  %[e],  %[den]\n\t"
+        "const.s   %[cst], 1\n\t"
+        "maddn.s   %[cst], %[e], %[r0]\n\t"
+        "mov.s     %[r1], %[r0]\n\t"
+        "mov.s     %[adj], %[den]\n\t"
+        "nexp01.s  %[nmant], %[num]\n\t"
+        "maddn.s   %[r1], %[cst], %[r1]\n\t"
+        "const.s   %[cst], 1\n\t"
+        "const.s   %[q], 0\n\t"
+        "neg.s     %[t], %[nmant]\n\t"
+        "maddn.s   %[cst], %[e], %[r1]\n\t"
+        "maddn.s   %[q], %[t], %[r0]\n\t"
+        "mkdadj.s  %[adj], %[num]\n\t"
+        "maddn.s   %[r1], %[cst], %[r1]\n\t"
+        "maddn.s   %[t], %[e], %[q]\n\t"
+        "const.s   %[r0], 1\n\t"
+        "maddn.s   %[r0], %[e], %[r1]\n\t"
+        "maddn.s   %[q], %[t], %[r1]\n\t"
+        "neg.s     %[nmant], %[nmant]\n\t"
+        "maddn.s   %[r1], %[r0], %[r1]\n\t"
+        "maddn.s   %[nmant], %[e], %[q]\n\t"
+        "addexpm.s %[q], %[adj]\n\t"
+        "addexp.s  %[r1], %[adj]\n\t"
+        "divn.s    %[q], %[nmant], %[r1]"
+        : [q] "=&f" (q), [e] "=&f" (e), [t] "=&f" (t), [cst] "=&f" (cst),
+        [r0] "=&f" (r0), [r1] "=&f" (r1), [adj] "=&f" (adj), [nmant] "=&f" (nmant)
+        : [num] "f" (num), [den] "f" (den));
+    return q;
+}
+#define PG_FDIV(a, b) pg_fdiv((a), (b))
+#else
+#define PG_FDIV(a, b) ((a) / (b))
+#endif
+
 static mp_obj_t picogame_project(size_t n_args, const mp_obj_t *args) {
     mp_buffer_info_t ci, pi, xi, yi;
     mp_get_buffer_raise(args[0], &ci, MP_BUFFER_READ);
@@ -647,7 +694,7 @@ static mp_obj_t picogame_project(size_t n_args, const mp_obj_t *args) {
             osy[i] = -32768;
             continue;
         }
-        float k = focal / cz;                       // hardware divide on an FPU part
+        float k = PG_FDIV(focal, cz);               // see pg_fdiv: inline the FPU divide sequence on Xtensa
         osx[i] = (int16_t)(cx0 + (X * rx + Z * rz) * k);
         osy[i] = (int16_t)(cy0 - (X * ux + Y * uy + Z * uz) * k);
     }
