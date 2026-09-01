@@ -794,7 +794,7 @@ msgstr ""
 #: shared-bindings/i2cioexpander/IOPin.c shared-bindings/mipidsi/Display.c
 #: shared-bindings/pwmio/PWMOut.c shared-bindings/supervisor/__init__.c
 #: shared-module/aurora_epaper/aurora_framebuffer.c
-#: shared-module/lvfontio/OnDiskFont.c
+#: shared-module/lvfontio/OnDiskFont.c shared-module/picogame/pg_compat_mp.c
 msgid "Invalid %q"
 msgstr ""
 
@@ -1981,7 +1981,8 @@ msgstr ""
 
 #: ports/raspberrypi/common-hal/picogame/Display.c py/argcheck.c py/runtime.c
 #: shared-bindings/bitmapfilter/__init__.c
-#: shared-module/audiodelays/MultiTapDelay.c shared-module/synthio/Note.c
+#: shared-module/audiodelays/MultiTapDelay.c
+#: shared-module/picogame/pg_compat_mp.c shared-module/synthio/Note.c
 #: shared-module/synthio/__init__.c
 msgid "%q must be of type %q, not %q"
 msgstr ""
@@ -2246,7 +2247,7 @@ msgstr ""
 #: shared-bindings/busdisplay/BusDisplay.c shared-bindings/displayio/Bitmap.c
 #: shared-bindings/framebufferio/FramebufferDisplay.c
 #: shared-bindings/is31fl3741/FrameBuffer.c
-#: shared-bindings/rgbmatrix/RGBMatrix.c
+#: shared-bindings/rgbmatrix/RGBMatrix.c shared-module/picogame/pg_compat_mp.c
 msgid "%q must be %d-%d"
 msgstr ""
 
@@ -2336,12 +2337,12 @@ msgstr ""
 msgid "%q must be %d"
 msgstr ""
 
-#: py/argcheck.c
+#: py/argcheck.c shared-module/picogame/pg_compat_mp.c
 msgid "%q must be >= %d"
 msgstr ""
 
 #: py/argcheck.c shared-bindings/gifio/GifWriter.c
-#: shared-module/gifio/OnDiskGif.c
+#: shared-module/gifio/OnDiskGif.c shared-module/picogame/pg_compat_mp.c
 msgid "%q must be <= %d"
 msgstr ""
 
@@ -2358,6 +2359,7 @@ msgid "%q length must be <= %d"
 msgstr ""
 
 #: py/argcheck.c shared-bindings/usb_hid/Device.c
+#: shared-module/picogame/pg_compat_mp.c
 msgid "%q length must be %d"
 msgstr ""
 
@@ -4107,6 +4109,10 @@ msgstr ""
 #: shared-bindings/picogame/Bitmap.c shared-module/msgpack/__init__.c
 #: supervisor/shared/settings.c
 msgid "Invalid format"
+msgstr ""
+
+#: shared-bindings/picogame/__init__.c
+msgid "fragmented"
 msgstr ""
 
 #: shared-bindings/ps2io/Ps2.c

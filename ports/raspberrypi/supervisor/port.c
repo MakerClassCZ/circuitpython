@@ -44,6 +44,11 @@
 #endif
 
 #include "supervisor/shared/safe_mode.h"
+
+#if CIRCUITPY_PICOGAME
+// picogame core1 fork-join probe worker teardown (common-hal/picogame/core1.c).
+void picogame_core1_reset(void);
+#endif
 #include "supervisor/shared/stack.h"
 #include "supervisor/shared/tick.h"
 
@@ -518,6 +523,10 @@ void reset_port(void) {
 
     #if CIRCUITPY_WIFI
     wifi_reset();
+    #endif
+
+    #if CIRCUITPY_PICOGAME
+    picogame_core1_reset();      // stop the fork-join worker so soft reload never leaves a stale core1
     #endif
 }
 

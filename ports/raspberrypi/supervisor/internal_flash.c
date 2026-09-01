@@ -30,6 +30,12 @@
 #include "hardware/flash.h"
 #include "pico/binary_info.h"
 
+#if CIRCUITPY_PICOGAME
+// park the picogame core1 fork-join worker before erase/program (it executes from XIP);
+// implemented in common-hal/picogame/core1.c.
+void picogame_core1_flash_fence(void);
+#endif
+
 #if !defined(TOTAL_FLASH_MINIMUM)
 #define TOTAL_FLASH_MINIMUM (2 * 1024 * 1024)
 #endif
@@ -102,6 +108,9 @@ void port_internal_flash_flush(void) {
     if (_cache_lba == NO_CACHE) {
         return;
     }
+    #if CIRCUITPY_PICOGAME
+    picogame_core1_flash_fence();   // park the picogame core1 worker: it executes from XIP
+    #endif
     supervisor_flash_pre_write();
     flash_range_erase(CIRCUITPY_CIRCUITPY_DRIVE_START_ADDR + _cache_lba, SECTOR_SIZE);
     flash_range_program(CIRCUITPY_CIRCUITPY_DRIVE_START_ADDR + _cache_lba, _cache, SECTOR_SIZE);

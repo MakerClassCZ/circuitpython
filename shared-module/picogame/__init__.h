@@ -88,7 +88,7 @@ typedef struct {
 
 // Triangles: a retained SCREEN-SPACE triangle batch the compositor rasterises entirely
 // in C (per strip, band-rejected) - no Python callback per strip, so unlike StripDraw it
-// stays composable without re-entering Python mid-frame. verts (int16 x0,y0,x1,y1,x2,y2 per tri) and
+// stays composable by core1/async refresh. verts (int16 x0,y0,x1,y1,x2,y2 per tri) and
 // colors (uint16 wire RGB565 per tri) are CALLER-OWNED arrays (refs held for GC; fill
 // them in place). Setting `count` selects how many draw and marks the layer dirty
 // full-screen (a 3D frame repaints everything anyway).
@@ -198,14 +198,27 @@ typedef busdisplay_busdisplay_obj_t picogame_output_t;
 // (scene space -> screen space) for camera/centering.
 // Returns a latched BaseException (Ctrl-C / ReloadException) raised by a StripDraw callback, or
 // MP_OBJ_NULL. The caller must re-raise it AFTER closing the display transaction.
+// Optional fork-join hook for row/column-splittable kernels (PROBE): a port may install a splitter
+// that runs [mid, hi) on a second core while the caller runs [lo, mid). NULL = always serial.
+// Kernels call it as: if (!picogame_par_split || !picogame_par_split(job, &ctx, lo, hi)) job(&ctx, lo, hi);
+typedef void (*picogame_job_t)(void *arg, int lo, int hi);
+extern bool (*picogame_par_split)(picogame_job_t fn, void *arg, int lo, int hi);
+// Port-side controls (RP2040: common-hal/picogame/core1.c; no-ops elsewhere).
+void picogame_core1_set_enabled(bool on);
+bool picogame_core1_enabled(void);
+
 #if defined(PICOGAME_HAS_INTERP)
-// rp2-port SIO-interpolator mode7 row walker. Fast path only:
+// rp2-port SIO-interpolator mode7 row walker (per-core HW - split-safe). Fast path only:
 // PAL8, opaque, stride == tw, log2(tw)+log2(th) <= 16; the caller guards and falls back.
 void picogame_mode7_row_interp(uint16_t *dst, int n,
     const uint8_t *tex, const uint16_t *pal,
     uint32_t fx, uint32_t fy, int32_t stepx, int32_t stepy,
     int shx, int shy, int ltw, int lth);
 #endif
+void picogame_core1_reset(void);
+void picogame_core1_flash_fence(void);
+bool picogame_core1_submit(picogame_job_t fn, void *arg);
+void picogame_core1_join(void);
 
 // Racing-road curve pass (see the implementation comment in __init__.c).
 void picogame_road_edges(int16_t *rl, int16_t *rr, const int32_t *hw_q16, int n,
