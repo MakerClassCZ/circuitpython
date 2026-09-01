@@ -74,8 +74,13 @@ int picogame_scene_compute_dirty_rects(
     for (size_t i = 0; i < n; i++) {
         uint8_t rawk = kinds[i];
         uint8_t kind = rawk & PICOGAME_KIND_MASK;
-        int iox = (rawk & PICOGAME_KIND_FIXED) ? 0 : ox;
-        int ioy = (rawk & PICOGAME_KIND_FIXED) ? 0 : oy;
+        // StripDraw and Triangles always composite in screen coordinates (the draw
+        // path never applies the view offset to them), so their dirty rects must not
+        // shift with the view either - otherwise a scrolled scene repaints an
+        // unrelated region and leaves the layer's real change stale on screen.
+        bool screen_space = kind == PICOGAME_KIND_STRIPDRAW || kind == PICOGAME_KIND_TRIANGLES;
+        int iox = ((rawk & PICOGAME_KIND_FIXED) || screen_space) ? 0 : ox;
+        int ioy = ((rawk & PICOGAME_KIND_FIXED) || screen_space) ? 0 : oy;
         if (kind != PICOGAME_KIND_SPRITE) {
             int tx1, ty1, tx2, ty2;
             bool d = false;
