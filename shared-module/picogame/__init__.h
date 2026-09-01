@@ -19,8 +19,13 @@
 // targets (Cortex-M0+) use integer 16.16. Only ONE path is compiled per board. The default
 // follows the architecture; a board can override with CIRCUITPY_PICOGAME_FPU=0/1 in its
 // mpconfigboard.mk. Python reads `picogame.FPU` to pack camera/point buffers to match.
+#if defined(__XTENSA__)
+#include <xtensa/config/core-isa.h>    // XCHAL_HAVE_FP: ESP32/ESP32-S3 = 1, ESP32-S2 = 0
+#endif
+
 #ifndef CIRCUITPY_PICOGAME_FPU
-#if (defined(__ARM_FP) && (__ARM_FP != 0)) || (defined(__riscv_flen) && (__riscv_flen > 0))
+#if (defined(__ARM_FP) && (__ARM_FP != 0)) || (defined(__riscv_flen) && (__riscv_flen > 0)) || \
+    (defined(__XTENSA__) && defined(XCHAL_HAVE_FP) && XCHAL_HAVE_FP)
 #define CIRCUITPY_PICOGAME_FPU (1)
 #else
 #define CIRCUITPY_PICOGAME_FPU (0)
