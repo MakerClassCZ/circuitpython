@@ -603,6 +603,13 @@ CFLAGS += -DCIRCUITPY_PICOGAME_FAST_DISPLAY=$(CIRCUITPY_PICOGAME_FAST_DISPLAY)
 # a game can enable Display(rgb444=...) only where it works. Default 0 (safe RGB565).
 CIRCUITPY_PICOGAME_RGB444 ?= 0
 CFLAGS += -DCIRCUITPY_PICOGAME_RGB444=$(CIRCUITPY_PICOGAME_RGB444)
+
+# FAT-XIP: pg.xip_map(path) - a 0-copy read-only memoryview over a CONTIGUOUS file on the
+# internal-flash CIRCUITPY drive (assets stay ordinary files; fragmented -> OSError, caller falls
+# back). Needs a memory-mapped drive: ports set it to 1 where port_internal_flash_xip_address()
+# exists (raspberrypi). ~0.4 KB flash.
+CIRCUITPY_PICOGAME_XIP_MAP ?= 0
+CFLAGS += -DCIRCUITPY_PICOGAME_XIP_MAP=$(CIRCUITPY_PICOGAME_XIP_MAP)
 # Full-frame RAM-framebuffer render backend for scanout-buffer platforms (RP2350 DVI/HSTX
 # boards like the Fruit Jam). Off by default so flash-tight SPI-only boards don't carry it.
 CIRCUITPY_PICOGAME_FRAMEBUFFER ?= 0
