@@ -34,10 +34,10 @@
 			reg = <0x000ea000 0x00008000>;
 		};
 
-		nvm_partition: partition@f2000 {
+		nvm_partition: partition@f3000 {
 			compatible = "zephyr,mapped-partition";
 			label = "nvm";
-			reg = <0x000f2000 0x00002000>;
+			reg = <0x000f3000 0x00001000>;
 		};
 	};
 };
