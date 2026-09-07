@@ -82,6 +82,7 @@ jobs:
       run: python3 -u build_release_files.py
       working-directory: tools
       env:
+        LANGUAGE_PREDICT: dryrun
         BOARDS: ${{ matrix.board }}
         PULL: ${{ github.event.number }}
         HEAD_COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
