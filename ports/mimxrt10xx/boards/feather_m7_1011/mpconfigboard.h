@@ -27,3 +27,5 @@
 
 #define DEFAULT_UART_BUS_RX (&pin_GPIO_AD_01)
 #define DEFAULT_UART_BUS_TX (&pin_GPIO_AD_02)
+
+// TEST: touch to build this board

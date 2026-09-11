@@ -24,3 +24,5 @@
 // #define LSE_VALUE ((uint32_t)32768)
 
 #define MICROPY_FATFS_EXFAT 0
+
+// TEST: touch to build this board
