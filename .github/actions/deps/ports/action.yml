@@ -18,6 +18,8 @@ runs:
     - name: Set up espressif
       if: inputs.port == 'espressif'
       uses: ./.github/actions/deps/ports/espressif
+      with:
+        board: ${{ inputs.board }}
 
     - name: Set up litex
       if: inputs.port == 'litex'

@@ -38,7 +38,7 @@ runs:
     - name: Install IDF tools
       if: inputs.port == 'espressif'
       run: |
-        $IDF_PATH/install.sh
+        $IDF_PATH/install.sh $IDF_TOOLS_TARGET
         rm -rf $IDF_TOOLS_PATH/dist
       shell: bash
     - name: Set environment
