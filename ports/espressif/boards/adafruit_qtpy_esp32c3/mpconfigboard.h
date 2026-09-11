@@ -30,3 +30,4 @@
 #define CIRCUITPY_WIFI_DEFAULT_TX_POWER   (15)
 
 // TEST: touch to build this board
+// TEST 2: warm cache run
