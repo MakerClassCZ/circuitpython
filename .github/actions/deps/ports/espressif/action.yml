@@ -1,5 +1,10 @@
 name: Fetch espressif port deps
 
+inputs:
+  board:
+    required: true
+    type: string
+
 runs:
   using: composite
   steps:
@@ -8,6 +13,15 @@ runs:
         echo >> $GITHUB_ENV "IDF_PATH=$GITHUB_WORKSPACE/ports/espressif/esp-idf"
         echo >> $GITHUB_ENV "IDF_TOOLS_PATH=$GITHUB_WORKSPACE/.idf_tools"
         echo >> $GITHUB_ENV "ESP_ROM_ELF_DIR=$GITHUB_WORKSPACE/.idf_tools"
+      shell: bash
+
+    - name: Get IDF target
+      id: idf-target
+      run: |
+        TARGET=$(awk '/^IDF_TARGET *=/ {print $3}' ports/espressif/boards/${{ inputs.board }}/mpconfigboard.mk)
+        echo "$TARGET"
+        echo "target=$TARGET" >> $GITHUB_OUTPUT
+        echo >> $GITHUB_ENV "IDF_TOOLS_TARGET=$TARGET"
       shell: bash
 
     - name: Get IDF commit
@@ -30,7 +44,7 @@ runs:
       uses: actions/cache@v5
       with:
         path: ${{ env.IDF_TOOLS_PATH }}
-        key: ${{ runner.os }}-${{ env.pythonLocation }}-tools-idf-${{ steps.idf-commit.outputs.commit }}
+        key: ${{ runner.os }}-${{ env.pythonLocation }}-tools-idf-${{ steps.idf-target.outputs.target }}-${{ steps.idf-commit.outputs.commit }}
 
     - name: Initialize IDF submodules
       run: git submodule update --init --depth=1 --recursive $IDF_PATH

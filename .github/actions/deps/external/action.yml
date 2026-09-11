@@ -32,7 +32,7 @@ runs:
     - name: Install IDF tools
       if: inputs.port == 'espressif'
       run: |
-        $IDF_PATH/install.sh
+        $IDF_PATH/install.sh $IDF_TOOLS_TARGET
         $IDF_PATH/tools/idf_tools.py install ninja
         rm -rf $IDF_TOOLS_PATH/dist
       shell: bash
