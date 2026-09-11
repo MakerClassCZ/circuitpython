@@ -27,3 +27,5 @@
 #define DEFAULT_UART_BUS_TX (&pin_GPIO1)
 
 #define DOUBLE_TAP_PIN (&pin_GPIO38)
+
+// TEST: touch to build this board

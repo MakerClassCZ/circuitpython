@@ -28,3 +28,5 @@
 
 // Reduce wifi.radio.tx_power due to the antenna design of this board
 #define CIRCUITPY_WIFI_DEFAULT_TX_POWER   (15)
+
+// TEST: touch to build this board
