@@ -142,3 +142,5 @@ $(foreach board,$(TEST_BOARDS),$(eval $(call test_board_rule,$(board))))
 test: $(TEST_BOARDS:%=test-build-%)
 	pytest cptools/tests
 	pytest tests/ -v
+
+# TEST: touch the port so every Zephyr board builds
