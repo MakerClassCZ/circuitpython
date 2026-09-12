@@ -80,6 +80,31 @@ uint32_t supervisor_flash_get_block_count(void) {
 void port_internal_flash_flush(void) {
 }
 
+#if CIRCUITPY_PICOGAME_XIP_MAP
+// picogame xip_map: the drive partition mapped into the data address space on first use. When
+// the drive spans two partitions (CIRCUITPY_STORAGE_EXTEND) they need not be adjacent in the
+// mapping, so a cluster run could cross the seam - return NULL there and let the caller read
+// into RAM. No espressif picogame board extends storage today.
+const uint8_t *port_internal_flash_xip_address(uint32_t block) {
+    #if CIRCUITPY_STORAGE_EXTEND
+    if (storage_extended) {
+        return NULL;
+    }
+    #endif
+    static const uint8_t *base;
+    if (base == NULL) {
+        const void *p;
+        esp_partition_mmap_handle_t handle;                  // stays mapped for the session
+        if (esp_partition_mmap(_partition[0], 0, _partition[0]->size, ESP_PARTITION_MMAP_DATA,
+            &p, &handle) != ESP_OK) {
+            return NULL;
+        }
+        base = p;
+    }
+    return base + block * FILESYSTEM_BLOCK_SIZE;
+}
+#endif
+
 static void single_partition_rw(const esp_partition_t *partition, uint8_t *data,
     const uint32_t offset, const uint32_t size_total, const bool op) {
     if (op == OP_READ) {

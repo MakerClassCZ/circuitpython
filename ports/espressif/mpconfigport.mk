@@ -466,3 +466,8 @@ endif
 
 # Usually lots of flash space available
 CIRCUITPY_MESSAGE_COMPRESSION_LEVEL ?= 1
+
+# picogame xip_map: the CIRCUITPY partition is memory-mapped on first use
+ifeq ($(CIRCUITPY_PICOGAME),1)
+CIRCUITPY_PICOGAME_XIP_MAP ?= 1
+endif

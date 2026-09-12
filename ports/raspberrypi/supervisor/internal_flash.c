@@ -149,3 +149,8 @@ mp_uint_t supervisor_flash_write_blocks(const uint8_t *src, uint32_t lba, uint32
 
 void supervisor_flash_release_cache(void) {
 }
+
+// picogame xip_map: the CIRCUITPY drive is XIP on every RP2 board.
+const uint8_t *port_internal_flash_xip_address(uint32_t block) {
+    return (const uint8_t *)(XIP_BASE + CIRCUITPY_CIRCUITPY_DRIVE_START_ADDR + block * FILESYSTEM_BLOCK_SIZE);
+}

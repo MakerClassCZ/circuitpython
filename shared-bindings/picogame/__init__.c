@@ -971,8 +971,90 @@ MP_DEFINE_CONST_OBJ_TYPE(picogame_display_type, MP_QSTR_Display, MP_TYPE_FLAG_NO
 MP_DEFINE_CONST_OBJ_TYPE(picogame_framebuffer_type, MP_QSTR_Framebuffer, MP_TYPE_FLAG_NONE, make_new, pg_stub_make_new);
 #endif
 
+// xip_map: files on the internal-flash CIRCUITPY drive read 0-copy through the XIP window
+// (issue #11198). One f_lseek(CREATE_LINKMAP) yields the cluster runs; no ff.c change. Rewriting a
+// mapped file while a Bitmap uses it shows garbage, never a fault: treat mapped assets as read-only.
+#if CIRCUITPY_PICOGAME_XIP_MAP
+#include "extmod/vfs_fat.h"
+#include "supervisor/filesystem.h"
+#include "supervisor/flash.h"
+#include "lib/oofatfs/ff.h"
+
+#define PG_XIP_MAX_RUNS 16
+
+//| def xip_map(path: str) -> tuple[memoryview, ...]:
+//|     """Read-only views over the flash bytes of `path` on the internal CIRCUITPY drive, one per
+//|     contiguous cluster run, in file order - no RAM, no copy. A 1-tuple is a contiguous file;
+//|     run boundaries fall on cluster (512 B) boundaries. Raises OSError: ENOENT missing,
+//|     EOPNOTSUPP not on internal flash or not mappable, EINVAL empty, EIO corrupt chain, EFBIG more than
+//|     16 runs."""
+//|     ...
+static mp_obj_t picogame_xip_map(mp_obj_t path_in) {
+    const char *path = mp_obj_str_get_str(path_in);
+    const char *under = NULL;
+    fs_user_mount_t *vfs = filesystem_for_path(path, &under);
+    if (vfs == NULL) {
+        mp_raise_OSError(MP_ENOENT);
+    }
+    if (vfs != filesystem_circuitpy()) {
+        mp_raise_OSError(MP_EOPNOTSUPP);           // SD card / other mount: not memory-mapped
+    }
+    FIL fp;
+    if (f_open(&vfs->fatfs, &fp, under, FA_READ) != FR_OK) {
+        mp_raise_OSError(MP_ENOENT);
+    }
+    DWORD tbl[2 + 2 * PG_XIP_MAX_RUNS];             // 136 B of stack
+    tbl[0] = 2 + 2 * PG_XIP_MAX_RUNS;
+    fp.cltbl = tbl;
+    FRESULT res = f_lseek(&fp, CREATE_LINKMAP);     // one FAT walk; FatFs writes the size it needed into tbl[0]
+    fp.cltbl = NULL;
+    FSIZE_t size = f_size(&fp);
+    WORD csize = vfs->fatfs.csize;
+    DWORD database = vfs->fatfs.database;
+    f_close(&fp);
+    if (res == FR_NOT_ENOUGH_CORE) {
+        mp_raise_OSError(MP_EFBIG);                 // more than PG_XIP_MAX_RUNS runs
+    }
+    if (res != FR_OK) {
+        mp_raise_OSError(MP_EIO);
+    }
+    size_t nruns = (size_t)((tbl[0] - 2) / 2);
+    if (size == 0 || nruns == 0) {
+        mp_raise_OSError(MP_EINVAL);            // empty file (no clusters)
+    }
+    supervisor_flash_flush();                   // raw XIP must see the RAM sector cache
+    mp_obj_t items[PG_XIP_MAX_RUNS];            // 64 B; the C stack is GC-scanned
+    FSIZE_t left = size;
+    size_t n = 0;
+    for (size_t i = 0; i < nruns && left > 0; i++) {
+        DWORD ncl = tbl[1 + 2 * i];
+        DWORD start = tbl[2 + 2 * i];
+        const uint8_t *addr = supervisor_flash_xip_address(database + (start - 2) * csize);
+        if (addr == NULL) {
+            mp_raise_OSError(MP_EOPNOTSUPP);        // the port could not map the drive
+        }
+        FSIZE_t span = (FSIZE_t)ncl * csize * FF_MIN_SS;
+        if (span > left) {
+            span = left;                        // the last run is clipped to the dir-entry size
+        }
+        // read-only: a stray write raises instead of silently hitting the XIP window
+        items[n++] = mp_obj_new_memoryview('B', (size_t)span, (void *)addr);
+        left -= span;
+    }
+    if (left != 0) {
+        mp_raise_OSError(MP_EIO);               // chain shorter than the dir-entry size: corrupt
+    }
+    return mp_obj_new_tuple(n, items);
+}
+static MP_DEFINE_CONST_FUN_OBJ_1(picogame_xip_map_obj, picogame_xip_map);
+#endif // CIRCUITPY_PICOGAME_XIP_MAP
+
+
 static const mp_rom_map_elem_t picogame_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR___name__), MP_ROM_QSTR(MP_QSTR_picogame) },
+    #if CIRCUITPY_PICOGAME_XIP_MAP
+    { MP_ROM_QSTR(MP_QSTR_xip_map), MP_ROM_PTR(&picogame_xip_map_obj) },
+    #endif
     { MP_ROM_QSTR(MP_QSTR_Bitmap), MP_ROM_PTR(&picogame_bitmap_type) },
     { MP_ROM_QSTR(MP_QSTR_Sprite), MP_ROM_PTR(&picogame_sprite_type) },
     { MP_ROM_QSTR(MP_QSTR_Display), MP_ROM_PTR(&picogame_display_type) },

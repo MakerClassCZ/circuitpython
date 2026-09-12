@@ -29,6 +29,10 @@ void supervisor_flash_init_vfs(struct _fs_user_mount_t *vfs);
 void supervisor_flash_flush(void);
 void supervisor_flash_release_cache(void);
 
+// picogame xip_map: XIP address of a CIRCUITPY FatFs sector, NULL if the port cannot map the drive.
+const uint8_t *supervisor_flash_xip_address(uint32_t fatfs_sector);
+const uint8_t *port_internal_flash_xip_address(uint32_t block);
+
 void supervisor_flash_set_extended(bool extended);
 bool supervisor_flash_get_extended(void);
 void supervisor_flash_update_extended(void);
