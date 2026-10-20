@@ -28,6 +28,9 @@
 #include "supervisor/shared/tick.h"
 #include "shared-bindings/microcontroller/__init__.h"
 #include "shared-bindings/rtc/__init__.h"
+#if CIRCUITPY_AUDIOIO
+#include "common-hal/audioio/AudioOut.h"
+#endif
 #include "common-hal/microcontroller/Pin.h"
 
 #include "linux_port.h"
@@ -134,6 +137,9 @@ safe_mode_t port_init(void) {
 void reset_port(void) {
     #if CIRCUITPY_RTC
     rtc_reset();
+    #endif
+    #if CIRCUITPY_AUDIOIO
+    audioout_reset();
     #endif
     reset_all_pins();
 }

@@ -136,14 +136,24 @@ void linux_sdl_configure(int scale, bool fullscreen) {
     _fullscreen = fullscreen;
 }
 
+bool linux_sdl_init(uint32_t subsystems) {
+    SDL_SetHint(SDL_HINT_NO_SIGNAL_HANDLERS, "1");      // the port owns SIGINT and SIGTERM
+    SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "0");    // whole pixels
+    if (SDL_WasInit(subsystems) == subsystems) {
+        return true;
+    }
+    if (SDL_InitSubSystem(subsystems) != 0) {
+        fprintf(stderr, "circuitpython: %s\r\n", SDL_GetError());
+        return false;
+    }
+    return true;
+}
+
 static bool _open(int width, int height) {
     if (_window != NULL) {
         return true;
     }
-    SDL_SetHint(SDL_HINT_NO_SIGNAL_HANDLERS, "1");      // the port owns SIGINT and SIGTERM
-    SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "0");    // whole pixels
-    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS | SDL_INIT_GAMECONTROLLER) != 0) {
-        fprintf(stderr, "circuitpython: no display: %s\r\n", SDL_GetError());
+    if (!linux_sdl_init(SDL_INIT_VIDEO | SDL_INIT_EVENTS | SDL_INIT_GAMECONTROLLER)) {
         return false;
     }
     Uint32 flags = SDL_WINDOW_RESIZABLE | (_fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);

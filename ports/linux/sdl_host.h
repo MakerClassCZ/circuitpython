@@ -12,6 +12,9 @@
 // The one window of the process, through SDL2: SDL picks X11, Wayland, KMS/DRM or fbdev, and
 // SDL_VIDEODRIVER=dummy runs without a screen.
 
+// Start SDL subsystems (SDL_INIT_VIDEO, SDL_INIT_AUDIO, ...); false and a message if SDL cannot.
+bool linux_sdl_init(uint32_t subsystems);
+
 // How a new window appears; set before the first show.
 void linux_sdl_configure(int scale, bool fullscreen);
 

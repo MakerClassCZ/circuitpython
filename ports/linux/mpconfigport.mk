@@ -21,7 +21,6 @@ CIRCUITPY_USB_DEVICE = 0
 # No hardware behind these on a desktop or a handheld.
 CIRCUITPY_ANALOGIO = 0
 CIRCUITPY_AUDIOBUSIO = 0
-CIRCUITPY_AUDIOIO = 0
 CIRCUITPY_BLEIO_HCI = 0
 CIRCUITPY_BUSIO = 0
 CIRCUITPY_BUSDEVICE = 0
@@ -41,6 +40,11 @@ CIRCUITPY_PARALLELDISPLAYBUS = 0
 # The display is an SDL2 window or screen (bindings/sdl); the SPI and I2C display buses have no
 # hardware here.
 CIRCUITPY_SDL = 1
+
+# Sound is audioio.AudioOut on an SDL2 audio device (common-hal/audioio), so audiocore samples,
+# audiomixer and synthio play. MP3 needs the lib/mp3 submodule.
+CIRCUITPY_AUDIOIO = 1
+CIRCUITPY_AUDIOMP3 = 0
 CIRCUITPY_FOURWIRE = 0
 CIRCUITPY_I2CDISPLAYBUS = 0
 CIRCUITPY_SHARPDISPLAY = 0
