@@ -36,7 +36,8 @@ has its flash.
 
 The console works as on a board: Ctrl-C interrupts, Ctrl-D reloads, any key enters the REPL.
 Ctrl-\ powers off. `microcontroller.reset()` restarts the process, and a crash restarts it in safe
-mode with a backtrace on stderr.
+mode with a backtrace on stderr; `addr2line -f -e build-desktop/circuitpython 0x...` turns its
+`circuitpython(+0x...)` lines into function names.
 
 ## Display, buttons and sound
 

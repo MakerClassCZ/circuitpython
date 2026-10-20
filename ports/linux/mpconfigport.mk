@@ -42,9 +42,9 @@ CIRCUITPY_PARALLELDISPLAYBUS = 0
 CIRCUITPY_SDL = 1
 
 # Sound is audioio.AudioOut on an SDL2 audio device (common-hal/audioio), so audiocore samples,
-# audiomixer and synthio play. MP3 needs the lib/mp3 submodule.
+# audiomixer and synthio play.
 CIRCUITPY_AUDIOIO = 1
-CIRCUITPY_AUDIOMP3 = 0
+
 CIRCUITPY_FOURWIRE = 0
 CIRCUITPY_I2CDISPLAYBUS = 0
 CIRCUITPY_SHARPDISPLAY = 0
@@ -59,3 +59,11 @@ CIRCUITPY_PICOGAME_FRAMEBUFFER = 1
 
 # CIRCUITPY is memory mapped, so files can be read in place.
 CIRCUITPY_STORAGE_MAP_FILE = 1
+
+# Software-only modules a board leaves out for flash size.
+CIRCUITPY_AUDIOEFFECTS = 1
+CIRCUITPY_AUDIOSPEED = 1
+CIRCUITPY_AUDIOFILEWRITER = 1
+CIRCUITPY_AUDIOMP3 = 1
+CIRCUITPY_HASHLIB = 1
+CIRCUITPY_BITOPS = 1

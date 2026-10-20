@@ -57,8 +57,6 @@ $(BUILD)/main.o: CFLAGS += -Dmain=circuitpython_main
 LIBS = -lm -lpthread -lrt $(SDL_LIBS)
 # Drops the shared weak defaults this port overrides (and the TLSF calls inside them).
 LDFLAGS += -Wl,--gc-sections
-# Function names in the hard fault backtrace.
-LDFLAGS += -rdynamic
 
 OBJ += $(PY_O) $(SUPERVISOR_O) $(addprefix $(BUILD)/, $(SRC_C:.c=.o))
 OBJ += $(addprefix $(BUILD)/, $(SRC_COMMON_HAL_SHARED_MODULE_EXPANDED:.c=.o))
