@@ -3,4 +3,3 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 Vladimir Smitka
 //
 // SPDX-License-Identifier: MIT
-

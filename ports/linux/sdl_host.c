@@ -35,40 +35,68 @@ static int _screenshot_count;
 // Keyboard on a desktop; the arrows and Z X A S sit where a handheld's buttons are.
 static int _key_button(SDL_Keycode key) {
     switch (key) {
-        case SDLK_UP: return LINUX_BUTTON_UP;
-        case SDLK_DOWN: return LINUX_BUTTON_DOWN;
-        case SDLK_LEFT: return LINUX_BUTTON_LEFT;
-        case SDLK_RIGHT: return LINUX_BUTTON_RIGHT;
-        case SDLK_z: return LINUX_BUTTON_A;
-        case SDLK_x: return LINUX_BUTTON_B;
-        case SDLK_a: return LINUX_BUTTON_X;
-        case SDLK_s: return LINUX_BUTTON_Y;
-        case SDLK_RETURN: return LINUX_BUTTON_START;
-        case SDLK_BACKSPACE: return LINUX_BUTTON_SELECT;
-        case SDLK_q: return LINUX_BUTTON_L;
-        case SDLK_w: return LINUX_BUTTON_R;
-        case SDLK_ESCAPE: return LINUX_BUTTON_MENU;
-        default: return -1;
+        case SDLK_UP:
+            return LINUX_BUTTON_UP;
+        case SDLK_DOWN:
+            return LINUX_BUTTON_DOWN;
+        case SDLK_LEFT:
+            return LINUX_BUTTON_LEFT;
+        case SDLK_RIGHT:
+            return LINUX_BUTTON_RIGHT;
+        case SDLK_z:
+            return LINUX_BUTTON_A;
+        case SDLK_x:
+            return LINUX_BUTTON_B;
+        case SDLK_a:
+            return LINUX_BUTTON_X;
+        case SDLK_s:
+            return LINUX_BUTTON_Y;
+        case SDLK_RETURN:
+            return LINUX_BUTTON_START;
+        case SDLK_BACKSPACE:
+            return LINUX_BUTTON_SELECT;
+        case SDLK_q:
+            return LINUX_BUTTON_L;
+        case SDLK_w:
+            return LINUX_BUTTON_R;
+        case SDLK_ESCAPE:
+            return LINUX_BUTTON_MENU;
+        default:
+            return -1;
     }
 }
 
 // Game controllers, which is how SDL reports a handheld's own buttons.
 static int _pad_button(uint8_t button) {
     switch (button) {
-        case SDL_CONTROLLER_BUTTON_DPAD_UP: return LINUX_BUTTON_UP;
-        case SDL_CONTROLLER_BUTTON_DPAD_DOWN: return LINUX_BUTTON_DOWN;
-        case SDL_CONTROLLER_BUTTON_DPAD_LEFT: return LINUX_BUTTON_LEFT;
-        case SDL_CONTROLLER_BUTTON_DPAD_RIGHT: return LINUX_BUTTON_RIGHT;
-        case SDL_CONTROLLER_BUTTON_A: return LINUX_BUTTON_A;
-        case SDL_CONTROLLER_BUTTON_B: return LINUX_BUTTON_B;
-        case SDL_CONTROLLER_BUTTON_X: return LINUX_BUTTON_X;
-        case SDL_CONTROLLER_BUTTON_Y: return LINUX_BUTTON_Y;
-        case SDL_CONTROLLER_BUTTON_START: return LINUX_BUTTON_START;
-        case SDL_CONTROLLER_BUTTON_BACK: return LINUX_BUTTON_SELECT;
-        case SDL_CONTROLLER_BUTTON_LEFTSHOULDER: return LINUX_BUTTON_L;
-        case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER: return LINUX_BUTTON_R;
-        case SDL_CONTROLLER_BUTTON_GUIDE: return LINUX_BUTTON_MENU;
-        default: return -1;
+        case SDL_CONTROLLER_BUTTON_DPAD_UP:
+            return LINUX_BUTTON_UP;
+        case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
+            return LINUX_BUTTON_DOWN;
+        case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
+            return LINUX_BUTTON_LEFT;
+        case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
+            return LINUX_BUTTON_RIGHT;
+        case SDL_CONTROLLER_BUTTON_A:
+            return LINUX_BUTTON_A;
+        case SDL_CONTROLLER_BUTTON_B:
+            return LINUX_BUTTON_B;
+        case SDL_CONTROLLER_BUTTON_X:
+            return LINUX_BUTTON_X;
+        case SDL_CONTROLLER_BUTTON_Y:
+            return LINUX_BUTTON_Y;
+        case SDL_CONTROLLER_BUTTON_START:
+            return LINUX_BUTTON_START;
+        case SDL_CONTROLLER_BUTTON_BACK:
+            return LINUX_BUTTON_SELECT;
+        case SDL_CONTROLLER_BUTTON_LEFTSHOULDER:
+            return LINUX_BUTTON_L;
+        case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER:
+            return LINUX_BUTTON_R;
+        case SDL_CONTROLLER_BUTTON_GUIDE:
+            return LINUX_BUTTON_MENU;
+        default:
+            return -1;
     }
 }
 

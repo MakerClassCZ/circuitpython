@@ -17,9 +17,22 @@ typedef struct {
 
 #define LINUX_PIN_COUNT 16
 
-extern const mcu_pin_obj_t pin_GPIO0, pin_GPIO1, pin_GPIO2, pin_GPIO3, pin_GPIO4, pin_GPIO5,
-    pin_GPIO6, pin_GPIO7, pin_GPIO8, pin_GPIO9, pin_GPIO10, pin_GPIO11, pin_GPIO12, pin_GPIO13,
-    pin_GPIO14, pin_GPIO15;
+extern const mcu_pin_obj_t pin_GPIO0;
+extern const mcu_pin_obj_t pin_GPIO1;
+extern const mcu_pin_obj_t pin_GPIO2;
+extern const mcu_pin_obj_t pin_GPIO3;
+extern const mcu_pin_obj_t pin_GPIO4;
+extern const mcu_pin_obj_t pin_GPIO5;
+extern const mcu_pin_obj_t pin_GPIO6;
+extern const mcu_pin_obj_t pin_GPIO7;
+extern const mcu_pin_obj_t pin_GPIO8;
+extern const mcu_pin_obj_t pin_GPIO9;
+extern const mcu_pin_obj_t pin_GPIO10;
+extern const mcu_pin_obj_t pin_GPIO11;
+extern const mcu_pin_obj_t pin_GPIO12;
+extern const mcu_pin_obj_t pin_GPIO13;
+extern const mcu_pin_obj_t pin_GPIO14;
+extern const mcu_pin_obj_t pin_GPIO15;
 
 typedef struct {
     bool output;
