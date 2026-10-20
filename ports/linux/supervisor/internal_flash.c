@@ -4,12 +4,14 @@
 //
 // SPDX-License-Identifier: MIT
 
-// CIRCUITPY is a plain FAT image file (the partition, without an MBR), mapped into memory. An
-// empty new file is formatted on first boot like a blank board; the host can open the image with
-// mtools or a loop mount, and storage.map_file reads straight from the mapping.
+// CIRCUITPY is a host directory, served by the supervisor through VfsPosix, or a plain FAT image
+// file (the partition, without an MBR) mapped into memory. An empty new image is formatted on
+// first boot like a blank board; the host can open it with mtools or a loop mount, and
+// storage.map_file reads straight from the mapping.
 
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -25,6 +27,28 @@
 
 static uint8_t *_drive;
 static size_t _drive_size;
+
+#if CIRCUITPY_FILESYSTEM_POSIX
+// An existing directory, or a missing path that does not end in .img, is a directory drive.
+static bool _drive_is_directory(void) {
+    static int directory = -1;
+    if (directory < 0) {
+        const char *path = linux_options.drive_path;
+        struct stat st;
+        size_t len = strlen(path);
+        if (stat(path, &st) == 0) {
+            directory = S_ISDIR(st.st_mode);
+        } else {
+            directory = !(len > 4 && strcmp(path + len - 4, ".img") == 0);
+        }
+    }
+    return directory == 1;
+}
+
+const char *supervisor_filesystem_posix_root(void) {
+    return _drive_is_directory() ? linux_options.drive_path : NULL;
+}
+#endif
 
 void supervisor_flash_init(void) {
     if (_drive != NULL) {
@@ -64,7 +88,9 @@ uint32_t supervisor_flash_get_block_count(void) {
 }
 
 void port_internal_flash_flush(void) {
-    msync(_drive, _drive_size, MS_ASYNC);
+    if (_drive != NULL) {
+        msync(_drive, _drive_size, MS_ASYNC);
+    }
 }
 
 mp_uint_t supervisor_flash_read_blocks(uint8_t *dest, uint32_t block, uint32_t num_blocks) {

@@ -63,6 +63,15 @@ extern void common_hal_mcu_enable_interrupts(void);
 #define CIRCUITPY_FILESYSTEM_LITTLEFS    (0)
 #endif
 
+// A port on a host can serve CIRCUITPY from a directory instead, through
+// VfsPosix; supervisor_filesystem_posix_root() picks it at run time.
+#ifndef CIRCUITPY_FILESYSTEM_POSIX
+#define CIRCUITPY_FILESYSTEM_POSIX       (0)
+#endif
+#if CIRCUITPY_FILESYSTEM_POSIX && !defined(MICROPY_VFS_POSIX)
+#define MICROPY_VFS_POSIX                (1)
+#endif
+
 // Always turn on exit code handling
 #define MICROPY_PYEXEC_ENABLE_EXIT_CODE_HANDLING (1)
 

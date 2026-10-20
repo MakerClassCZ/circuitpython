@@ -23,6 +23,7 @@
 
 #include "supervisor/background_callback.h"
 #include "supervisor/board.h"
+#include "supervisor/filesystem.h"
 #include "supervisor/port.h"
 #include "supervisor/shared/safe_mode.h"
 #include "supervisor/shared/tick.h"
@@ -156,6 +157,12 @@ void reset_port(void) {
     audioout_reset();
     #endif
     reset_all_pins();
+    #if CIRCUITPY_FILESYSTEM_POSIX
+    // Once CIRCUITPY is up, a directory drive starts reloading on host edits.
+    if (filesystem_present() && supervisor_filesystem_posix_root() != NULL) {
+        linux_watch_start(linux_options.drive_path);
+    }
+    #endif
 }
 
 void reset_cpu(void) {
@@ -163,6 +170,10 @@ void reset_cpu(void) {
     char word[16];
     snprintf(word, sizeof(word), "%u", (unsigned)_saved_word);
     setenv(SAVED_WORD_ENV, word, 1);
+    // The relative paths of the command line are relative to where the process started.
+    if (chdir(linux_options.start_dir) != 0) {
+        perror("circuitpython: reset");
+    }
     execv("/proc/self/exe", linux_options.argv);
     perror("circuitpython: reset");
     _exit(1);

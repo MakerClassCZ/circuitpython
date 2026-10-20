@@ -6,6 +6,8 @@
 
 #pragma once
 
+#include <errno.h>
+
 #include "py/obj.h"
 #include "lib/oofatfs/ff.h"
 #include "supervisor/shared/tick.h"
@@ -15,6 +17,23 @@ static inline mp_uint_t mp_hal_ticks_ms(void) {
 }
 
 void mp_hal_set_interrupt_char(int c);
+
+// VfsPosix retries a system call that an interrupt signal (the tick) cut short.
+#define MP_HAL_RETRY_SYSCALL(ret, syscall, raise) \
+    { \
+        for (;;) { \
+            ret = syscall; \
+            if (ret == -1) { \
+                int err = errno; \
+                if (err == EINTR) { \
+                    mp_handle_pending(true); \
+                    continue; \
+                } \
+                raise; \
+            } \
+            break; \
+        } \
+    }
 
 void mp_hal_disable_all_interrupts(void);
 void mp_hal_enable_all_interrupts(void);

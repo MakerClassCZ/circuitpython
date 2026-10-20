@@ -13,7 +13,8 @@
 
 // Command-line options, parsed in linux_main.c.
 typedef struct {
-    const char *drive_path;     // the CIRCUITPY image
+    const char *drive_path;     // CIRCUITPY: a directory or a FAT image, absolute
+    const char *start_dir;      // the working directory at start; VfsPosix changes it
     size_t drive_size;          // bytes, used only when the image is created
     size_t ram_size;            // bytes of RAM for the port heap
     char **argv;                // reset re-executes the process with these
@@ -49,6 +50,9 @@ enum {
 // A button pulls its pin low while pressed, like a button to ground.
 void linux_button_set(int button, bool pressed);
 void linux_buttons_release_all(void);
+
+// Watch the CIRCUITPY directory and auto-reload when the host changes a file in it; once.
+void linux_watch_start(const char *root);
 
 void linux_serial_restore(void);
 __attribute__((noreturn)) void linux_power_off(int status);

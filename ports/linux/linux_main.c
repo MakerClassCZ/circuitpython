@@ -15,6 +15,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <alloca.h>
+#include <limits.h>
 #include <sys/resource.h>
 #include <unistd.h>
 
@@ -29,7 +30,7 @@ int circuitpython_main(void);
 #define PAGE (4096)
 
 linux_options_t linux_options = {
-    .drive_path = "CIRCUITPY.img",
+    .drive_path = "CIRCUITPY",
     .drive_size = 16 * MIB,
     .ram_size = 16 * MIB,
 };
@@ -39,9 +40,10 @@ uint8_t *linux_stack_top;
 
 static void usage(const char *prog) {
     fprintf(stderr,
-        "usage: %s [--drive IMAGE] [--drive-size MB] [--ram MB]\n"
-        "  --drive IMAGE     the CIRCUITPY drive, a FAT image (default CIRCUITPY.img, created if missing)\n"
-        "  --drive-size MB   size of a newly created drive (default 16)\n"
+        "usage: %s [--drive PATH] [--drive-size MB] [--ram MB]\n"
+        "  --drive PATH      CIRCUITPY: a directory (default ./CIRCUITPY), or a FAT image file;\n"
+        "                    a missing PATH is created, as an image if it ends in .img\n"
+        "  --drive-size MB   size of a newly created image (default 16)\n"
         "  --ram MB          heap for CircuitPython (default 16)\n"
         "Ctrl-\\ on the console powers off.\n", prog);
 }
@@ -104,6 +106,23 @@ int main(int argc, char **argv) {
             usage(argv[0]);
             return strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0 ? 0 : 2;
         }
+    }
+
+    // VfsPosix moves the working directory into CIRCUITPY, so keep paths absolute.
+    static char start_dir[PATH_MAX];
+    static char drive_path[PATH_MAX];
+    if (getcwd(start_dir, sizeof(start_dir)) == NULL) {
+        perror("circuitpython: working directory");
+        return 1;
+    }
+    linux_options.start_dir = start_dir;
+    if (linux_options.drive_path[0] != '/') {
+        int len = snprintf(drive_path, sizeof(drive_path), "%s/%s", start_dir, linux_options.drive_path);
+        if (len < 0 || (size_t)len >= sizeof(drive_path)) {
+            fprintf(stderr, "circuitpython: drive path too long\n");
+            return 2;
+        }
+        linux_options.drive_path = drive_path;
     }
 
     // Every thread starts with all signals blocked: port_init() unblocks the interrupt signals on

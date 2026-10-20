@@ -31,5 +31,12 @@
 #define MICROPY_HW_MCU_NAME                     "unknown"
 #endif
 
+// CIRCUITPY can be a host directory (VfsPosix) as well as a FAT image (--drive).
+#ifndef CIRCUITPY_FILESYSTEM_POSIX
+#define CIRCUITPY_FILESYSTEM_POSIX              (1)
+#endif
+// VfsPosix's statvfs, for os.statvfs() on a directory CIRCUITPY.
+#define MICROPY_PY_OS_STATVFS                   (1)
+
 // Also includes mpconfigboard.h
 #include "py/circuitpy_mpconfig.h"

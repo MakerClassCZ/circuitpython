@@ -5,6 +5,7 @@
 // SPDX-License-Identifier: MIT
 
 #include <SDL.h>
+#include <limits.h>
 #include <pthread.h>
 #include <signal.h>
 #include <stdio.h>
@@ -101,10 +102,11 @@ static int _pad_button(uint8_t button) {
 }
 
 static void _save_screenshot(void) {
-    char name[32];
+    char name[PATH_MAX];
     const char *path = getenv("CIRCUITPY_SCREENSHOT");
     if (path == NULL) {
-        snprintf(name, sizeof(name), "screenshot-%03d.bmp", _screenshot_count++);
+        // In the starting directory: CIRCUITPY may be the working directory now.
+        snprintf(name, sizeof(name), "%s/screenshot-%03d.bmp", linux_options.start_dir, _screenshot_count++);
         path = name;
     }
     SDL_Surface *surface = SDL_CreateRGBSurfaceWithFormatFrom(_pixels, _width, _height, 16,

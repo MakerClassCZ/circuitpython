@@ -24,6 +24,7 @@ SRC_C += \
 	background.c \
 	linux_main.c \
 	linux_pins.c \
+	linux_watch.c \
 	mphalport.c \
 	boards/$(BOARD)/board.c \
 	boards/$(BOARD)/pins.c \

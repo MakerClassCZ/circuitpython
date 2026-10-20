@@ -19,24 +19,31 @@ Another SDL2 can be given with `SDL_CFLAGS` and `SDL_LIBS`.
 ## Run
 
 ```
-build-desktop/circuitpython [--drive CIRCUITPY.img] [--drive-size MB] [--ram MB]
+build-desktop/circuitpython [--drive PATH] [--drive-size MB] [--ram MB]
 ```
 
-On first start the drive image is created and formatted like a blank board: `code.py`,
-`settings.toml`, `lib/` and `boot_out.txt`. The image is a plain FAT volume, so the host reads and
-writes it with mtools or a loop mount:
+CIRCUITPY is a directory, `./CIRCUITPY` by default. A missing directory is created on first start
+with what a blank board has: `code.py`, `settings.toml` and `lib/`. Edit the files with any editor
+or copy a project in, and `code.py` reloads after each change, as when a computer saves to a
+board's drive. Hidden files such as editor swap files and `.git` do not trigger a reload.
+
+Python sees the directory read-only, as on a board whose drive is connected to a computer.
+`storage.remount("/", readonly=False)` in `boot.py` gives it to Python instead: Python can write,
+and host edits stop reloading `code.py`. Unlike FAT, file names are case-sensitive, and
+`storage.erase_filesystem()` leaves the directory as it is. `storage.map_file()` maps a file of
+the directory straight into memory.
+
+`--drive` can also name a FAT image file. A missing path ending in `.img` becomes a new image of
+`--drive-size` MB, formatted like a blank board. The host reads and writes an image with mtools or
+a loop mount, but only while CircuitPython is not running:
 
 ```
 mcopy -i CIRCUITPY.img -o code.py ::code.py
 mcopy -i CIRCUITPY.img -s -o mygame/* ::/
 ```
 
-Write to the image only while CircuitPython is not running: the program has it mounted, as a board
-has its flash. While it runs, edit files through the web workflow (below), which also reloads
-`code.py` after a change.
-
 The console works as on a board: Ctrl-C interrupts, Ctrl-D reloads, any key enters the REPL.
-Ctrl-\ powers off. `microcontroller.reset()` restarts the process, and a crash restarts it in safe
+Ctrl-\ or closing the window powers off. `microcontroller.reset()` restarts the process, and a crash restarts it in safe
 mode with a backtrace on stderr; `addr2line -f -e build-desktop/circuitpython 0x...` turns its
 `circuitpython(+0x...)` lines into function names.
 
@@ -97,8 +104,6 @@ program headless.
 ## Not yet
 
 - Native `.mpy` files (turbo): loading them needs executable memory.
-- Files written into the image from the host while CircuitPython runs are not noticed; use the
-  web workflow.
 - `wifi` itself, mDNS and BLE: code that calls `wifi.radio` needs `hostnetwork.HostNetwork()`
   instead.
 - `busio` and USB.
