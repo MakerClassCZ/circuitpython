@@ -21,11 +21,11 @@ typedef struct {
 
 extern linux_options_t linux_options;
 
-// The VM thread's stack, allocated in linux_main.c.
+// The VM's part of the main thread's stack, set up in linux_main.c.
 extern uint8_t *linux_stack_bottom;
 extern uint8_t *linux_stack_top;
 
-// The VM thread; other threads wake it like an interrupt would.
+// The VM thread (the process's main thread); other threads wake it like an interrupt would.
 extern pthread_t linux_vm_thread;
 
 // The process was restarted by reset_cpu() rather than started fresh.
