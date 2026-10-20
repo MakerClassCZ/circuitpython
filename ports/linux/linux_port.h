@@ -32,6 +32,9 @@ extern pthread_t linux_vm_thread;
 extern bool linux_was_reset;
 void linux_wake_vm(void);
 
+// Run the workflow's background poll after ms, from a timer interrupt.
+void linux_request_workflow_poll(uint32_t ms);
+
 // Block until an interrupt signal arrives or timeout_ms passes (-1 = no timeout).
 void linux_wait_for_interrupt(int timeout_ms);
 

@@ -34,6 +34,7 @@ void common_hal_mcu_disable_interrupts(void) {
     sigemptyset(&irq);
     sigaddset(&irq, SIGRTMIN);
     sigaddset(&irq, SIGRTMIN + 1);
+    sigaddset(&irq, SIGRTMIN + 2);
     pthread_sigmask(SIG_BLOCK, &irq, &old);
     if (_nesting++ == 0) {
         _saved_mask = old;

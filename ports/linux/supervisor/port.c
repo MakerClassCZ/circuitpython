@@ -26,6 +26,7 @@
 #include "supervisor/port.h"
 #include "supervisor/shared/safe_mode.h"
 #include "supervisor/shared/tick.h"
+#include "supervisor/workflow.h"
 #include "shared-bindings/microcontroller/__init__.h"
 #include "shared-bindings/rtc/__init__.h"
 #if CIRCUITPY_AUDIOIO
@@ -41,6 +42,7 @@
 
 #define TICK_SIGNAL (SIGRTMIN)
 #define WAKE_SIGNAL (SIGRTMIN + 1)
+#define POLL_SIGNAL (SIGRTMIN + 2)
 #define SAVED_WORD_ENV "CIRCUITPY_LINUX_SAVED_WORD"
 
 pthread_t linux_vm_thread;
@@ -51,6 +53,7 @@ static uint32_t _saved_word;
 static struct timespec _start;
 static timer_t _tick_timer;
 static timer_t _wake_timer;
+static timer_t _poll_timer;
 static volatile sig_atomic_t _woken;
 static sigset_t _irq_signals;
 
@@ -60,6 +63,11 @@ static void _on_interrupt(int sig, siginfo_t *info, void *context) {
     if (sig == TICK_SIGNAL) {
         supervisor_tick();
     }
+    #if CIRCUITPY_SOCKETPOOL
+    if (sig == POLL_SIGNAL) {
+        supervisor_workflow_request_background();
+    }
+    #endif
     _woken = 1;
 }
 
@@ -111,6 +119,7 @@ safe_mode_t port_init(void) {
     sigemptyset(&_irq_signals);
     sigaddset(&_irq_signals, TICK_SIGNAL);
     sigaddset(&_irq_signals, WAKE_SIGNAL);
+    sigaddset(&_irq_signals, POLL_SIGNAL);
 
     struct sigaction action = {0};
     action.sa_sigaction = _on_interrupt;
@@ -118,6 +127,7 @@ safe_mode_t port_init(void) {
     action.sa_mask = _irq_signals;              // one interrupt at a time
     sigaction(TICK_SIGNAL, &action, NULL);
     sigaction(WAKE_SIGNAL, &action, NULL);
+    sigaction(POLL_SIGNAL, &action, NULL);
 
     struct sigevent event = {0};
     event.sigev_notify = SIGEV_THREAD_ID;
@@ -128,6 +138,10 @@ safe_mode_t port_init(void) {
     }
     event.sigev_signo = WAKE_SIGNAL;
     if (timer_create(CLOCK_MONOTONIC, &event, &_wake_timer) != 0) {
+        return SAFE_MODE_PROGRAMMATIC;
+    }
+    event.sigev_signo = POLL_SIGNAL;
+    if (timer_create(CLOCK_MONOTONIC, &event, &_poll_timer) != 0) {
         return SAFE_MODE_PROGRAMMATIC;
     }
     pthread_sigmask(SIG_UNBLOCK, &_irq_signals, NULL);
@@ -251,6 +265,10 @@ void port_interrupt_after_ticks(uint32_t ticks) {
     _set_timer(_wake_timer, ns > 0 ? ns : 1000, false);
 }
 
+void linux_request_workflow_poll(uint32_t ms) {
+    _set_timer(_poll_timer, (uint64_t)ms * 1000000u, false);
+}
+
 void linux_wait_for_interrupt(int timeout_ms) {
     sigset_t old;
     pthread_sigmask(SIG_BLOCK, &_irq_signals, &old);
@@ -258,6 +276,7 @@ void linux_wait_for_interrupt(int timeout_ms) {
         sigset_t open = old;
         sigdelset(&open, TICK_SIGNAL);
         sigdelset(&open, WAKE_SIGNAL);
+        sigdelset(&open, POLL_SIGNAL);
         struct timespec timeout = { timeout_ms / 1000, (timeout_ms % 1000) * 1000000L };
         ppoll(NULL, 0, timeout_ms < 0 ? NULL : &timeout, &open);
     }
