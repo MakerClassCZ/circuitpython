@@ -33,7 +33,8 @@ SRC_C += \
 	shared/runtime/gchelper_generic.c
 
 # A cross build for Windows: make CROSS_COMPILE=x86_64-w64-mingw32- SDL_DIR=.../SDL2-2.x/x86_64-w64-mingw32
-ifneq (,$(findstring mingw,$(CROSS_COMPILE)))
+# (A native build in an MSYS2 MinGW shell takes the same path; it has not been tried.)
+ifneq (,$(findstring mingw,$(CROSS_COMPILE))$(findstring Windows_NT,$(OS)))
 WINDOWS = 1
 EXE = .exe
 endif
@@ -180,6 +181,12 @@ SRC_QSTR += $(filter-out $(SRC_MBEDTLS),$(SRC_C)) $(SRC_SUPERVISOR) $(SRC_CIRCUI
 SRC_QSTR_PREPROCESSOR +=
 
 all: $(BUILD)/circuitpython$(EXE) $(BUILD)/debugadapter.py
+ifeq ($(WINDOWS),1)
+# The program needs SDL2.dll beside it.
+all: $(BUILD)/SDL2.dll
+$(BUILD)/SDL2.dll: $(SDL_DIR)/bin/SDL2.dll
+	$(Q)cp $< $@
+endif
 
 # The debug adapter lives beside the program (see debug_hook.c).
 $(BUILD)/debugadapter.py: python/debugadapter.py
