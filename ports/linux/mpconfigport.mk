@@ -48,3 +48,10 @@ CIRCUITPY_SHARPDISPLAY = 0
 # The port heap is the system allocator with a budget (supervisor/port.c); the bundled TLSF is
 # 32-bit only.
 CIRCUITPY_LIB_TLSF = 0
+
+# picogame draws straight into the SDL framebuffer.
+CIRCUITPY_PICOGAME = 1
+CIRCUITPY_PICOGAME_FRAMEBUFFER = 1
+
+# CIRCUITPY is memory mapped, so files can be read in place.
+CIRCUITPY_STORAGE_MAP_FILE = 1
