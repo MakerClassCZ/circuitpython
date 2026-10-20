@@ -5,8 +5,12 @@
 // SPDX-License-Identifier: MIT
 
 #include <SDL.h>
+#include <pthread.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
 
 #include "py/mpconfig.h"
 #include "supervisor/shared/tick.h"
@@ -83,6 +87,50 @@ static void _save_screenshot(void) {
     SDL_FreeSurface(surface);
 }
 
+// CIRCUITPY_SDL_KEYS names a file or FIFO of lines "down KEY", "up KEY" (SDL key names such as
+// Z or Right) and "sleep MS"; they arrive as key events, so a test can play a program headless.
+static void *_key_script(void *arg) {
+    sigset_t all;
+    sigfillset(&all);
+    pthread_sigmask(SIG_BLOCK, &all, NULL);
+    FILE *f = fopen((const char *)arg, "r");
+    if (f == NULL) {
+        fprintf(stderr, "circuitpython: cannot open %s\r\n", (const char *)arg);
+        return NULL;
+    }
+    char line[64];
+    while (fgets(line, sizeof(line), f) != NULL) {
+        char verb[8], name[32];
+        if (sscanf(line, "%7s %31[^\r\n]", verb, name) != 2) {
+            continue;
+        }
+        if (strcmp(verb, "sleep") == 0) {
+            usleep(atoi(name) * 1000);
+            continue;
+        }
+        SDL_Event event = {0};
+        event.type = strcmp(verb, "down") == 0 ? SDL_KEYDOWN : SDL_KEYUP;
+        event.key.state = event.type == SDL_KEYDOWN ? SDL_PRESSED : SDL_RELEASED;
+        event.key.keysym.sym = SDL_GetKeyFromName(name);
+        if (event.key.keysym.sym != SDLK_UNKNOWN) {
+            SDL_PushEvent(&event);
+            linux_wake_vm();
+        }
+    }
+    fclose(f);
+    return NULL;
+}
+
+static void _start_key_script(void) {
+    const char *path = getenv("CIRCUITPY_SDL_KEYS");
+    if (path == NULL) {
+        return;
+    }
+    pthread_t thread;
+    pthread_create(&thread, NULL, _key_script, (void *)path);
+    pthread_detach(thread);
+}
+
 void linux_sdl_configure(int scale, bool fullscreen) {
     _scale = scale > 0 ? scale : 1;
     _fullscreen = fullscreen;
@@ -117,6 +165,7 @@ static bool _open(int width, int height) {
         return false;
     }
     SDL_ShowCursor(SDL_DISABLE);
+    _start_key_script();
     return true;
 }
 
