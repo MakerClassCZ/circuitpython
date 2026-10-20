@@ -10,7 +10,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
+#include <time.h>
 
 #include "py/mpconfig.h"
 #include "supervisor/shared/tick.h"
@@ -131,7 +131,9 @@ static void *_key_script(void *arg) {
             continue;
         }
         if (strcmp(verb, "sleep") == 0) {
-            usleep(atoi(name) * 1000);
+            int ms = atoi(name);
+            struct timespec t = { ms / 1000, (ms % 1000) * 1000000L };
+            nanosleep(&t, NULL);
             continue;
         }
         SDL_Event event = {0};
@@ -163,6 +165,7 @@ void linux_sdl_configure(int scale, bool fullscreen) {
 }
 
 bool linux_sdl_init(uint32_t subsystems) {
+    SDL_SetMainReady();                                 // the port has its own main()
     SDL_SetHint(SDL_HINT_NO_SIGNAL_HANDLERS, "1");      // the port owns SIGINT and SIGTERM
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "0");    // whole pixels
     if (SDL_WasInit(subsystems) == subsystems) {

@@ -29,8 +29,20 @@
 #include <fcntl.h>
 #include <stdio.h>
 #include <sys/stat.h>
-#include <sys/statvfs.h>
 #include <unistd.h>
+#ifdef _WIN32
+#include <direct.h>
+#include <io.h>
+#include <windows.h>
+#ifndef O_CLOEXEC
+#define O_CLOEXEC O_NOINHERIT
+#endif
+#else
+#include <sys/statvfs.h>
+#endif
+#ifndef O_BINARY
+#define O_BINARY 0
+#endif
 #endif
 
 #if CIRCUITPY_SDCARDIO
@@ -97,9 +109,159 @@ static const char *posix_path(supervisor_vfs_t *vfs, const char *path, char *buf
     return n < 0 || (size_t)n >= len ? NULL : buf;
 }
 
-static uint64_t posix_mtime_ns(const struct stat *st) {
+#ifdef _WIN32
+// Times, directories, renames and free space: the C runtime's versions lack what the supervisor
+// needs (sub-second times, replacing renames), so these go to Win32.
+#define FILETIME_EPOCH (116444736000000000ULL)      // 1970 in 100 ns units since 1601
+
+static uint64_t filetime_ns(FILETIME t) {
+    uint64_t v = ((uint64_t)t.dwHighDateTime << 32) | t.dwLowDateTime;
+    return v < FILETIME_EPOCH ? 0 : (v - FILETIME_EPOCH) * 100;
+}
+
+static void set_handle_mtime(HANDLE h, uint64_t ns) {
+    uint64_t v = ns / 100 + FILETIME_EPOCH;
+    FILETIME t = { (DWORD)v, (DWORD)(v >> 32) };
+    SetFileTime(h, NULL, NULL, &t);
+}
+
+static supervisor_fs_err_t win_error(DWORD err) {
+    switch (err) {
+        case ERROR_FILE_NOT_FOUND:
+            return SUPERVISOR_FS_NO_FILE;
+        case ERROR_PATH_NOT_FOUND:
+            return SUPERVISOR_FS_NO_PATH;
+        case ERROR_FILE_EXISTS:
+        case ERROR_ALREADY_EXISTS:
+            return SUPERVISOR_FS_EXIST;
+        case ERROR_ACCESS_DENIED:
+        case ERROR_WRITE_PROTECT:
+        case ERROR_SHARING_VIOLATION:
+            return SUPERVISOR_FS_WRITE_PROTECTED;
+        case ERROR_DISK_FULL:
+        case ERROR_HANDLE_DISK_FULL:
+            return SUPERVISOR_FS_NO_SPACE;
+        default:
+            return SUPERVISOR_FS_IO;
+    }
+}
+
+static uint64_t posix_mtime_ns(const char *host, const struct stat *st) {
+    WIN32_FILE_ATTRIBUTE_DATA data;
+    if (GetFileAttributesExA(host, GetFileExInfoStandard, &data)) {
+        return filetime_ns(data.ftLastWriteTime);
+    }
+    return (uint64_t)st->st_mtime * 1000000000ULL;
+}
+
+static void posix_set_fd_mtime(int fd, uint64_t ns) {
+    if (ns != 0) {
+        set_handle_mtime((HANDLE)_get_osfhandle(fd), ns);
+    }
+}
+
+static void posix_set_path_mtime(const char *host, uint64_t ns) {
+    if (ns == 0) {
+        return;
+    }
+    HANDLE h = CreateFileA(host, FILE_WRITE_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, NULL);
+    if (h != INVALID_HANDLE_VALUE) {
+        set_handle_mtime(h, ns);
+        CloseHandle(h);
+    }
+}
+
+static supervisor_fs_err_t posix_mkdir(const char *host) {
+    return _mkdir(host) == 0 ? SUPERVISOR_FS_OK : posix_error(errno);
+}
+
+static supervisor_fs_err_t posix_rename(const char *old_host, const char *new_host) {
+    return MoveFileExA(old_host, new_host, MOVEFILE_REPLACE_EXISTING) ? SUPERVISOR_FS_OK : win_error(GetLastError());
+}
+
+// A file or an empty directory, like f_unlink().
+static supervisor_fs_err_t posix_remove(const char *host) {
+    struct stat st;
+    if (stat(host, &st) != 0) {
+        return posix_error(errno);
+    }
+    int result = S_ISDIR(st.st_mode) ? _rmdir(host) : _unlink(host);
+    return result == 0 ? SUPERVISOR_FS_OK : posix_error(errno);
+}
+
+static supervisor_fs_err_t posix_statfs(const char *host, size_t *block_size, size_t *total_blocks, size_t *free_blocks) {
+    ULARGE_INTEGER available, total, unused;
+    if (!GetDiskFreeSpaceExA(host, &available, &total, &unused)) {
+        return SUPERVISOR_FS_IO;
+    }
+    if (block_size != NULL) {
+        *block_size = 4096;
+    }
+    if (total_blocks != NULL) {
+        *total_blocks = total.QuadPart / 4096;
+    }
+    if (free_blocks != NULL) {
+        *free_blocks = available.QuadPart / 4096;
+    }
+    return SUPERVISOR_FS_OK;
+}
+#else
+static uint64_t posix_mtime_ns(const char *host, const struct stat *st) {
+    (void)host;
     return (uint64_t)st->st_mtim.tv_sec * 1000000000ULL + st->st_mtim.tv_nsec;
 }
+
+static void posix_set_fd_mtime(int fd, uint64_t ns) {
+    if (ns != 0) {
+        struct timespec times[2] = {
+            { .tv_nsec = UTIME_OMIT },
+            { .tv_sec = ns / 1000000000ULL, .tv_nsec = ns % 1000000000ULL },
+        };
+        futimens(fd, times);
+    }
+}
+
+static void posix_set_path_mtime(const char *host, uint64_t ns) {
+    if (ns != 0) {
+        struct timespec times[2] = {
+            { .tv_nsec = UTIME_OMIT },
+            { .tv_sec = ns / 1000000000ULL, .tv_nsec = ns % 1000000000ULL },
+        };
+        utimensat(AT_FDCWD, host, times, 0);
+    }
+}
+
+static supervisor_fs_err_t posix_mkdir(const char *host) {
+    return mkdir(host, 0755) == 0 ? SUPERVISOR_FS_OK : posix_error(errno);
+}
+
+static supervisor_fs_err_t posix_rename(const char *old_host, const char *new_host) {
+    return rename(old_host, new_host) == 0 ? SUPERVISOR_FS_OK : posix_error(errno);
+}
+
+// A file or an empty directory, like f_unlink().
+static supervisor_fs_err_t posix_remove(const char *host) {
+    return remove(host) == 0 ? SUPERVISOR_FS_OK : posix_error(errno);
+}
+
+static supervisor_fs_err_t posix_statfs(const char *host, size_t *block_size, size_t *total_blocks, size_t *free_blocks) {
+    struct statvfs st;
+    if (statvfs(host, &st) != 0) {
+        return SUPERVISOR_FS_IO;
+    }
+    if (block_size != NULL) {
+        *block_size = st.f_frsize;
+    }
+    if (total_blocks != NULL) {
+        *total_blocks = st.f_blocks;
+    }
+    if (free_blocks != NULL) {
+        *free_blocks = st.f_bavail;
+    }
+    return SUPERVISOR_FS_OK;
+}
+#endif
 #endif
 
 static volatile uint32_t filesystem_flush_interval_ms = CIRCUITPY_FILESYSTEM_FLUSH_INTERVAL_MS;
@@ -322,7 +484,7 @@ static bool posix_filesystem_init(const char *root, bool create_allowed) {
     _posix_lock_count = 0;
     struct stat st;
     if (stat(root, &st) != 0) {
-        if (!create_allowed || mkdir(root, 0755) != 0) {
+        if (!create_allowed || posix_mkdir(root) != SUPERVISOR_FS_OK) {
             return false;
         }
         // A new directory gets what a freshly formatted drive gets.
@@ -804,7 +966,7 @@ supervisor_fs_err_t supervisor_vfs_open_file(supervisor_vfs_t *vfs, const char *
         if ((flags & SUPERVISOR_FS_OPEN_TRUNCATE) != 0) {
             oflags |= O_TRUNC;
         }
-        int fd = open(host, oflags | O_CLOEXEC, 0644);
+        int fd = open(host, oflags | O_CLOEXEC | O_BINARY, 0644);
         if (fd < 0) {
             return posix_error(errno);
         }
@@ -905,13 +1067,7 @@ supervisor_fs_err_t supervisor_vfs_close_file(supervisor_vfs_file_t *file) {
     file->open = false;
     #if CIRCUITPY_FILESYSTEM_POSIX
     if (file->posix) {
-        if (file->mtime_ns != 0) {
-            struct timespec times[2] = {
-                { .tv_nsec = UTIME_OMIT },
-                { .tv_sec = file->mtime_ns / 1000000000ULL, .tv_nsec = file->mtime_ns % 1000000000ULL },
-            };
-            futimens(file->fd, times);
-        }
+        posix_set_fd_mtime(file->fd, file->mtime_ns);
         return close(file->fd) == 0 ? SUPERVISOR_FS_OK : posix_error(errno);
     }
     #endif
@@ -1103,7 +1259,7 @@ supervisor_fs_err_t supervisor_vfs_stat(supervisor_vfs_t *vfs, const char *path,
             *size = st.st_size;
         }
         if (mtime_ns != NULL) {
-            *mtime_ns = posix_mtime_ns(&st);
+            *mtime_ns = posix_mtime_ns(host, &st);
         }
         return SUPERVISOR_FS_OK;
     }
@@ -1161,16 +1317,11 @@ supervisor_fs_err_t supervisor_vfs_mkdir(supervisor_vfs_t *vfs, const char *path
         if (!filesystem_is_writable_by_python(vfs)) {
             return SUPERVISOR_FS_WRITE_PROTECTED;
         }
-        if (mkdir(host, 0755) != 0) {
-            return posix_error(errno);
+        supervisor_fs_err_t err = posix_mkdir(host);
+        if (err != SUPERVISOR_FS_OK) {
+            return err;
         }
-        if (mtime_ns != 0) {
-            struct timespec times[2] = {
-                { .tv_nsec = UTIME_OMIT },
-                { .tv_sec = mtime_ns / 1000000000ULL, .tv_nsec = mtime_ns % 1000000000ULL },
-            };
-            utimensat(AT_FDCWD, host, times, 0);
-        }
+        posix_set_path_mtime(host, mtime_ns);
         return SUPERVISOR_FS_OK;
     }
     #endif
@@ -1209,7 +1360,7 @@ supervisor_fs_err_t supervisor_vfs_rename(supervisor_vfs_t *vfs, const char *old
         if (!filesystem_is_writable_by_python(vfs)) {
             return SUPERVISOR_FS_WRITE_PROTECTED;
         }
-        return rename(old_host, new_host) == 0 ? SUPERVISOR_FS_OK : posix_error(errno);
+        return posix_rename(old_host, new_host);
     }
     #endif
     #if CIRCUITPY_FILESYSTEM_LITTLEFS
@@ -1237,8 +1388,7 @@ supervisor_fs_err_t supervisor_vfs_unlink(supervisor_vfs_t *vfs, const char *pat
         if (!filesystem_is_writable_by_python(vfs)) {
             return SUPERVISOR_FS_WRITE_PROTECTED;
         }
-        // Like f_unlink(): a file or an empty directory.
-        return remove(host) == 0 ? SUPERVISOR_FS_OK : posix_error(errno);
+        return posix_remove(host);
     }
     #endif
     #if CIRCUITPY_FILESYSTEM_LITTLEFS
@@ -1360,7 +1510,7 @@ supervisor_fs_err_t supervisor_vfs_readdir(supervisor_vfs_dir_t *dir, char *name
                 *size = st.st_size;
             }
             if (mtime_ns != NULL) {
-                *mtime_ns = posix_mtime_ns(&st);
+                *mtime_ns = posix_mtime_ns(host, &st);
             }
         }
         return SUPERVISOR_FS_OK;
@@ -1490,20 +1640,10 @@ supervisor_fs_err_t supervisor_vfs_statfs(supervisor_vfs_t *vfs, size_t *block_s
     #if CIRCUITPY_FILESYSTEM_POSIX
     if (is_posix(vfs)) {
         char host[PATH_MAX];
-        struct statvfs st;
-        if (posix_path(vfs, "/", host, sizeof(host)) == NULL || statvfs(host, &st) != 0) {
+        if (posix_path(vfs, "/", host, sizeof(host)) == NULL) {
             return SUPERVISOR_FS_IO;
         }
-        if (block_size != NULL) {
-            *block_size = st.f_frsize;
-        }
-        if (total_blocks != NULL) {
-            *total_blocks = st.f_blocks;
-        }
-        if (free_blocks != NULL) {
-            *free_blocks = st.f_bavail;
-        }
-        return SUPERVISOR_FS_OK;
+        return posix_statfs(host, block_size, total_blocks, free_blocks);
     }
     #endif
     #if CIRCUITPY_FILESYSTEM_LITTLEFS

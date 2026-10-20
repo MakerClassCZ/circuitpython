@@ -79,3 +79,8 @@ CIRCUITPY_IPADDRESS = 1
 # The web workflow serves CIRCUITPY over HTTP: set CIRCUITPY_WEB_API_PASSWORD (and usually
 # CIRCUITPY_WEB_API_PORT, as port 80 needs root) in settings.toml.
 CIRCUITPY_WEB_WORKFLOW = 1
+
+# The MP3 decoder's inline assembly takes _WIN32 to mean MSVC; it stays out of the Windows build.
+ifneq (,$(findstring mingw,$(CROSS_COMPILE)))
+CIRCUITPY_AUDIOMP3 = 0
+endif

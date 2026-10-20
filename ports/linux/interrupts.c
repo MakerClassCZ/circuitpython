@@ -10,6 +10,9 @@
 // drive watcher signal, as an interrupt wakes an MCU. All of it is pthreads, which MinGW provides
 // on Windows too.
 
+#ifdef _WIN32
+#include <windows.h>
+#endif
 #include <pthread.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -165,6 +168,9 @@ static void *_timer_main(void *arg) {
 }
 
 bool linux_interrupts_init(void) {
+    #ifdef _WIN32
+    timeBeginPeriod(1);     // the scheduler's default 15.6 ms would quantise the tick
+    #endif
     pthread_attr_t attr;
     pthread_attr_init(&attr);
     pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);

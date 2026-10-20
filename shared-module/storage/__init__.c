@@ -25,9 +25,14 @@
 #include "py/objlist.h"
 #if CIRCUITPY_FILESYSTEM_POSIX
 #include <errno.h>
-#include <sys/mman.h>
 #include <sys/stat.h>
 #include "extmod/vfs_posix.h"
+#ifdef _WIN32
+#include <io.h>
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#endif
 #endif
 #endif
 
@@ -323,10 +328,22 @@ static int map_posix_file(mp_obj_t file_in, storage_map_run_fn_t fn, void *ctx) 
     if (_posix_map_count == POSIX_MAPS_MAX) {
         return MP_ENOMEM;
     }
+    #ifdef _WIN32
+    HANDLE mapping = CreateFileMappingA((HANDLE)_get_osfhandle(fd), NULL, PAGE_READONLY, 0, 0, NULL);
+    if (mapping == NULL) {
+        return MP_EIO;
+    }
+    void *addr = MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, st.st_size);
+    CloseHandle(mapping);
+    if (addr == NULL) {
+        return MP_EIO;
+    }
+    #else
     void *addr = mmap(NULL, st.st_size, PROT_READ, MAP_SHARED, fd, 0);
     if (addr == MAP_FAILED) {
         return errno;
     }
+    #endif
     _posix_maps[_posix_map_count].addr = addr;
     _posix_maps[_posix_map_count].len = st.st_size;
     _posix_map_count++;
@@ -344,7 +361,11 @@ void storage_map_file_reset(void) {
     #if CIRCUITPY_FILESYSTEM_POSIX
     while (_posix_map_count > 0) {
         _posix_map_count--;
+        #ifdef _WIN32
+        UnmapViewOfFile(_posix_maps[_posix_map_count].addr);
+        #else
         munmap(_posix_maps[_posix_map_count].addr, _posix_maps[_posix_map_count].len);
+        #endif
     }
     #endif
 }

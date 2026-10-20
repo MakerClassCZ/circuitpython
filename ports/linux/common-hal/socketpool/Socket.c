@@ -24,18 +24,11 @@
 #include "linux_port.h"
 
 #include <errno.h>
-#include <fcntl.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
-#include <arpa/inet.h>
-#include <netdb.h>
-#include <netinet/in.h>
-#include <netinet/tcp.h>
-#include <poll.h>
-#include <sys/socket.h>
-#include <unistd.h>
+#include "host_socket.h"
 
 #define SOCKETPOOL_IP_STR_LEN 48
 
@@ -113,7 +106,7 @@ static void resolve_host_or_throw(socketpool_socket_obj_t *self, const char *hos
 // would hold a core while the network is slow. A signal (the tick) only shortens the wait.
 static void _wait_ready(int fd, short events) {
     struct pollfd p = { .fd = fd, .events = events };
-    poll(&p, 1, 10);
+    host_poll(&p, 1, 10);
 }
 
 void socket_user_reset(void) {
@@ -131,8 +124,8 @@ static bool _socketpool_socket(socketpool_socketpool_obj_t *self,
     socketpool_socketpool_addressfamily_t family, socketpool_socketpool_sock_t type,
     int proto,
     socketpool_socket_obj_t *sock) {
-    int addr_family;
-    int ipproto;
+    int addr_family = AF_INET;
+    int ipproto = IPPROTO_IP;
 
     if (family == SOCKETPOOL_AF_INET) {
         addr_family = AF_INET;
@@ -166,14 +159,17 @@ static bool _socketpool_socket(socketpool_socketpool_obj_t *self,
 
     sock->num = socknum;
 
-    // Enable address reuse by default to avoid bind failures on recently-used ports.
+    #ifndef _WIN32
+    // Enable address reuse by default to avoid bind failures on recently-used ports. (Winsock's
+    // SO_REUSEADDR lets a second socket take a port in use, and a closed port is free at once.)
     int reuseaddr = 1;
     if (setsockopt(socknum, SOL_SOCKET, SO_REUSEADDR, &reuseaddr, sizeof(reuseaddr)) < 0) {
         // Ignore if SO_REUSEADDR is unsupported.
     }
+    #endif
 
     // Sockets should be nonblocking in most cases.
-    if (fcntl(socknum, F_SETFL, O_NONBLOCK) < 0) {
+    if (host_sock_set_nonblocking(socknum) < 0) {
         // Ignore if non-blocking is unsupported.
     }
 
@@ -210,7 +206,7 @@ socketpool_socket_obj_t *common_hal_socketpool_socket(socketpool_socketpool_obj_
         // Report socket's real error: -EPFNOSUPPORT (e.g. TCP compiled
         // out) is very different from a full fd table (EMFILE), so hiding the
         // errno behind the generic "Out of sockets" hides the actual cause.
-        mp_raise_OSError(errno);
+        mp_raise_OSError(host_sock_errno());
     }
     return sock;
 }
@@ -229,12 +225,13 @@ int socketpool_socket_accept(socketpool_socket_obj_t *self, mp_obj_t *peer_out, 
         }
         RUN_BACKGROUND_TASKS;
         newsoc = accept(self->num, (struct sockaddr *)&peer_addr, &socklen);
+        int err = host_sock_errno();
         // In non-blocking mode, fail instead of timing out
         if (newsoc == -1 && (self->timeout_ms == 0 || mp_hal_is_interrupted())) {
             return -MP_EAGAIN;
         }
-        if (newsoc == -1 && errno != EAGAIN && errno != EWOULDBLOCK) {
-            return -errno;
+        if (newsoc == -1 && err != EAGAIN && err != EWOULDBLOCK) {
+            return -err;
         }
         if (newsoc == -1) {
             _wait_ready(self->num, POLLIN);
@@ -250,7 +247,7 @@ int socketpool_socket_accept(socketpool_socket_obj_t *self, mp_obj_t *peer_out, 
     }
 
     // We got a socket. New client socket will not be non-blocking by default, so make it non-blocking.
-    if (fcntl(newsoc, F_SETFL, O_NONBLOCK) < 0) {
+    if (host_sock_set_nonblocking(newsoc) < 0) {
         // Ignore if non-blocking is unsupported.
     }
 
@@ -331,7 +328,7 @@ size_t common_hal_socketpool_socket_bind(socketpool_socket_obj_t *self,
     if (result == 0) {
         return 0;
     }
-    return errno;
+    return host_sock_errno();
 }
 
 void socketpool_socket_close(socketpool_socket_obj_t *self) {
@@ -346,8 +343,7 @@ void socketpool_socket_close(socketpool_socket_obj_t *self) {
     self->connected = false;
     int fd = self->num;
     if (fd >= 0) {
-        shutdown(fd, SHUT_RDWR);
-        close(fd);
+        host_sock_close(fd);
     }
     self->num = -1;
 }
@@ -370,9 +366,10 @@ void common_hal_socketpool_socket_connect(socketpool_socket_obj_t *self,
         return;
     }
 
-    if (result < 0 && errno != EINPROGRESS) {
-        // Some error happened; error is in errno.
-        mp_raise_OSError(errno);
+    int err = host_sock_errno();
+    if (result < 0 && err != EINPROGRESS && err != EAGAIN) {
+        // Some error happened. (Winsock reports a connect under way as "would block".)
+        mp_raise_OSError(err);
         return;
     }
 
@@ -396,7 +393,7 @@ void common_hal_socketpool_socket_connect(socketpool_socket_obj_t *self,
             poll_timeout = timeout_left;
         }
 
-        result = poll(&fd, 1, poll_timeout);
+        result = host_poll(&fd, 1, poll_timeout);
         if (result == 0) {
             if (self->timeout_ms == (uint)-1) {
                 continue;
@@ -410,17 +407,17 @@ void common_hal_socketpool_socket_connect(socketpool_socket_obj_t *self,
         }
 
         if (result < 0) {
-            if (errno == EINTR) {
+            if (host_sock_errno() == EINTR) {
                 continue;               // an interrupt signal, not an error
             }
-            mp_raise_OSError(errno);
+            mp_raise_OSError(host_sock_errno());
         }
 
         int error_code = 0;
         socklen_t socklen = sizeof(error_code);
-        result = getsockopt(self->num, SOL_SOCKET, SO_ERROR, &error_code, &socklen);
+        result = getsockopt(self->num, SOL_SOCKET, SO_ERROR, HOST_SOCK_BUF(&error_code), &socklen);
         if (result < 0 || error_code != 0) {
-            mp_raise_OSError(error_code != 0 ? error_code : errno);
+            mp_raise_OSError(error_code != 0 ? host_sock_errno_of(error_code) : host_sock_errno());
         }
         self->connected = true;
         return;
@@ -459,13 +456,14 @@ mp_uint_t common_hal_socketpool_socket_recvfrom_into(socketpool_socket_obj_t *se
             timed_out = supervisor_ticks_ms64() - start_ticks >= self->timeout_ms;
         }
         RUN_BACKGROUND_TASKS;
-        received = recvfrom(self->num, buf, len, MSG_DONTWAIT, (struct sockaddr *)&source_addr, &socklen);
+        received = recvfrom(self->num, HOST_SOCK_BUF(buf), len, MSG_DONTWAIT, (struct sockaddr *)&source_addr, &socklen);
+        int err = host_sock_errno();
 
-        if (received < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
-            mp_raise_OSError(errno);
+        if (received < 0 && err != EAGAIN && err != EWOULDBLOCK) {
+            mp_raise_OSError(err);
         }
 
-        if (received == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+        if (received == -1 && (err == EAGAIN || err == EWOULDBLOCK)) {
             // In non-blocking mode, fail instead of looping
             if (self->timeout_ms == 0) {
                 mp_raise_OSError(MP_EAGAIN);
@@ -505,11 +503,12 @@ int socketpool_socket_recv_into(socketpool_socket_obj_t *self,
                 timed_out = supervisor_ticks_ms64() - start_ticks >= self->timeout_ms;
             }
             RUN_BACKGROUND_TASKS;
-            received = recv(self->num, (void *)buf, len, MSG_DONTWAIT);
-            if (received < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
-                return -errno;
+            received = recv(self->num, HOST_SOCK_BUF(buf), len, MSG_DONTWAIT);
+            int err = host_sock_errno();
+            if (received < 0 && err != EAGAIN && err != EWOULDBLOCK) {
+                return -err;
             }
-            if (received < 1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+            if (received < 1 && (err == EAGAIN || err == EWOULDBLOCK)) {
                 if (self->timeout_ms == 0) {
                     return -MP_EAGAIN;
                 }
@@ -518,7 +517,7 @@ int socketpool_socket_recv_into(socketpool_socket_obj_t *self,
             }
             // In non-blocking mode, fail instead of looping
             if (received < 1 && self->timeout_ms == 0) {
-                if ((received == 0) || (errno == ENOTCONN)) {
+                if ((received == 0) || (err == ENOTCONN)) {
                     self->connected = false;
                     return -MP_ENOTCONN;
                 }
@@ -554,16 +553,17 @@ mp_uint_t common_hal_socketpool_socket_recv_into(socketpool_socket_obj_t *self, 
 int socketpool_socket_send(socketpool_socket_obj_t *self, const uint8_t *buf, uint32_t len) {
     int sent = -1;
     if (self->num != -1) {
-        sent = send(self->num, buf, len, MSG_NOSIGNAL);
+        sent = send(self->num, HOST_SOCK_CBUF(buf), len, MSG_NOSIGNAL);
     } else {
         sent = -MP_EBADF;
     }
 
     if (sent < 0) {
-        if (errno == ECONNRESET || errno == ENOTCONN) {
+        int err = host_sock_errno();
+        if (err == ECONNRESET || err == ENOTCONN) {
             self->connected = false;
         }
-        return -errno;
+        return -err;
     }
 
     return sent;
@@ -585,7 +585,7 @@ mp_uint_t common_hal_socketpool_socket_sendto(socketpool_socket_obj_t *self,
     struct sockaddr_storage addr;
     resolve_host_or_throw(self, host, &addr, port);
 
-    int bytes_sent = sendto(self->num, buf, len, MSG_NOSIGNAL, (struct sockaddr *)&addr, sizeof(addr));
+    int bytes_sent = sendto(self->num, HOST_SOCK_CBUF(buf), len, MSG_NOSIGNAL, (struct sockaddr *)&addr, sizeof(addr));
     if (bytes_sent < 0) {
         mp_raise_BrokenPipeError();
         return 0;
@@ -640,9 +640,9 @@ int common_hal_socketpool_socket_setsockopt(socketpool_socket_obj_t *self, int l
         }
     }
 
-    int err = setsockopt(self->num, host_level, host_optname, value, optlen);
+    int err = setsockopt(self->num, host_level, host_optname, HOST_SOCK_CBUF(value), optlen);
     if (err != 0) {
-        return -errno;
+        return -host_sock_errno();
     }
     return 0;
 }
@@ -653,7 +653,7 @@ bool common_hal_socketpool_readable(socketpool_socket_obj_t *self) {
         .events = POLLIN,
     };
 
-    int num_triggered = poll(&fd, 1, 0);
+    int num_triggered = host_poll(&fd, 1, 0);
     return num_triggered > 0;
 }
 
@@ -663,7 +663,7 @@ bool common_hal_socketpool_writable(socketpool_socket_obj_t *self) {
         .events = POLLOUT,
     };
 
-    int num_triggered = poll(&fd, 1, 0);
+    int num_triggered = host_poll(&fd, 1, 0);
     return num_triggered > 0;
 }
 

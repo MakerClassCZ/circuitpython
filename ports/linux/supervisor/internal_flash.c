@@ -10,14 +10,18 @@
 // storage.map_file reads straight from the mapping.
 
 #include <errno.h>
-#include <fcntl.h>
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/mman.h>
 #include <sys/stat.h>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <fcntl.h>
+#include <sys/mman.h>
 #include <unistd.h>
+#endif
 
 #include "py/mphal.h"
 #include "supervisor/flash.h"
@@ -55,13 +59,43 @@ void supervisor_flash_init(void) {
         return;
     }
     const char *path = linux_options.drive_path;
+    size_t size;
+    #ifdef _WIN32
+    HANDLE file = CreateFileA(path, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ, NULL, OPEN_ALWAYS,
+        FILE_ATTRIBUTE_NORMAL, NULL);
+    LARGE_INTEGER length = {0};
+    if (file == INVALID_HANDLE_VALUE || !GetFileSizeEx(file, &length)) {
+        fprintf(stderr, "circuitpython: cannot open drive %s: error %lu\n", path, (unsigned long)GetLastError());
+        linux_power_off(1);
+    }
+    size = length.QuadPart;
+    if (size == 0) {
+        size = linux_options.drive_size;
+        length.QuadPart = size;
+        if (!SetFilePointerEx(file, length, NULL, FILE_BEGIN) || !SetEndOfFile(file)) {
+            fprintf(stderr, "circuitpython: cannot size drive %s: error %lu\n", path, (unsigned long)GetLastError());
+            linux_power_off(1);
+        }
+    }
+    size -= size % FILESYSTEM_BLOCK_SIZE;
+    HANDLE mapping = CreateFileMappingA(file, NULL, PAGE_READWRITE, (DWORD)((uint64_t)size >> 32), (DWORD)size, NULL);
+    if (mapping != NULL) {
+        _drive = MapViewOfFile(mapping, FILE_MAP_ALL_ACCESS, 0, 0, size);
+        CloseHandle(mapping);
+    }
+    CloseHandle(file);
+    if (_drive == NULL) {
+        fprintf(stderr, "circuitpython: cannot map drive %s: error %lu\n", path, (unsigned long)GetLastError());
+        linux_power_off(1);
+    }
+    #else
     int fd = open(path, O_RDWR | O_CREAT, 0644);
     struct stat st;
     if (fd < 0 || fstat(fd, &st) != 0) {
         fprintf(stderr, "circuitpython: cannot open drive %s: %s\n", path, strerror(errno));
         linux_power_off(1);
     }
-    size_t size = st.st_size;
+    size = st.st_size;
     if (size == 0) {
         size = linux_options.drive_size;
         if (ftruncate(fd, size) != 0) {
@@ -76,6 +110,7 @@ void supervisor_flash_init(void) {
         fprintf(stderr, "circuitpython: cannot map drive %s: %s\n", path, strerror(errno));
         linux_power_off(1);
     }
+    #endif
     _drive_size = size;
 }
 
@@ -89,7 +124,11 @@ uint32_t supervisor_flash_get_block_count(void) {
 
 void port_internal_flash_flush(void) {
     if (_drive != NULL) {
+        #ifdef _WIN32
+        FlushViewOfFile(_drive, _drive_size);
+        #else
         msync(_drive, _drive_size, MS_ASYNC);
+        #endif
     }
 }
 

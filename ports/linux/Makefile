@@ -31,9 +31,21 @@ SRC_C += \
 	boards/$(BOARD)/pins.c \
 	shared/runtime/gchelper_generic.c
 
+# A cross build for Windows: make CROSS_COMPILE=x86_64-w64-mingw32- SDL_DIR=.../SDL2-2.x/x86_64-w64-mingw32
+ifneq (,$(findstring mingw,$(CROSS_COMPILE)))
+WINDOWS = 1
+EXE = .exe
+endif
+
 ifeq ($(CIRCUITPY_SDL),1)
+ifeq ($(WINDOWS),1)
+# The port has its own main(); SDL's console build needs neither SDL_main nor -mwindows.
+SDL_CFLAGS ?= -I$(SDL_DIR)/include/SDL2 -DSDL_MAIN_HANDLED
+SDL_LIBS ?= -L$(SDL_DIR)/lib -lSDL2
+else
 SDL_CFLAGS ?= $(shell sdl2-config --cflags)
 SDL_LIBS ?= $(shell pkg-config --exists sdl2 && pkg-config --libs sdl2 || echo -l:libSDL2-2.0.so.0)
+endif
 SRC_C += \
 	bindings/sdl/__init__.c \
 	bindings/sdl/Framebuffer.c \
@@ -49,6 +61,18 @@ COPT = -O2 -g
 endif
 
 CFLAGS += $(INC) -Wall -Werror -std=gnu11 $(BASE_CFLAGS) $(COPT)
+# clang (llvm-mingw, macOS) has neither -fsingle-precision-constant nor GCC's inlining parameter;
+# the shared code writes its float constants as floats anyway.
+ifneq (,$(findstring clang,$(shell $(CC) --version 2>/dev/null)))
+CLANG = 1
+CFLAGS := $(filter-out -fsingle-precision-constant --param max-inline-insns-single=500 -Wimplicit-fallthrough=2,$(CFLAGS))
+# Warning classes clang reads more widely than GCC, which the GCC builds keep checking.
+CFLAGS += -Wno-expansion-to-defined -Wno-unreachable-code -Wno-double-promotion -Wno-literal-conversion \
+	-Wno-c23-extensions -Wno-unused-variable -Wno-unused-but-set-variable
+endif
+ifeq ($(WINDOWS),1)
+CFLAGS += -D_WIN32_WINNT=0x0A00
+endif
 CFLAGS += -D_GNU_SOURCE -fno-common
 # The shared code is written for 32-bit MCUs; these warnings fire on a 64-bit host only.
 CFLAGS += -Wno-error=cast-align -Wno-cast-align -Wno-error=unused-parameter -Wno-error=sign-compare
@@ -93,9 +117,14 @@ CFLAGS += \
 
 $(BUILD)/x509_crt_bundle.S: $(TOP)/lib/certificates/data/roots-full.pem $(TOP)/tools/gen_crt_bundle.py
 	$(Q)$(PYTHON) $(TOP)/tools/gen_crt_bundle.py -i $< -o $@ --asm
+ifeq ($(WINDOWS),1)
+NOEXECSTACK =
+else
+NOEXECSTACK = -Wa,--noexecstack
+endif
 $(BUILD)/x509_crt_bundle.o: $(BUILD)/x509_crt_bundle.S
 	$(STEPECHO) "CC $<"
-	$(Q)$(CC) $(CFLAGS) -Wa,--noexecstack -c -o $@ $<
+	$(Q)$(CC) $(CFLAGS) $(NOEXECSTACK) -c -o $@ $<
 OBJ_MBEDTLS := $(BUILD)/x509_crt_bundle.o
 
 MBEDTLS_GEN := $(BUILD)/tf-psa-crypto
@@ -110,16 +139,31 @@ $(MBEDTLS_WRAPPERS_H): $(TOP)/lib/mbedtls/tf-psa-crypto/scripts/generate_driver_
 OBJ_MBEDTLS += $(MBEDTLS_WRAPPERS_C:.c=.o)
 CFLAGS += -I$(MBEDTLS_GEN)
 $(patsubst %.c,$(BUILD)/%.o,$(SRC_MBEDTLS)) $(OBJ_MBEDTLS): $(MBEDTLS_WRAPPERS_H)
+ifeq ($(CLANG),1)
+$(patsubst %.c,$(BUILD)/%.o,$(SRC_MBEDTLS)) $(OBJ_MBEDTLS): CFLAGS += \
+	-Wno-array-bounds \
+	-Wno-undef \
+	-Wno-uninitialized-const-pointer
+else
 $(patsubst %.c,$(BUILD)/%.o,$(SRC_MBEDTLS)) $(OBJ_MBEDTLS): CFLAGS += \
 	-Wno-array-bounds \
 	-Wno-suggest-attribute=format \
+	-Wno-undef \
 	-Wno-unused-but-set-variable
+endif
 endif
 
 # CircuitPython's main() becomes circuitpython_main(); linux_main.c owns the process entry.
 $(BUILD)/main.o: CFLAGS += -Dmain=circuitpython_main
 
+ifeq ($(WINDOWS),1)
+# winpthreads linked in, so the program needs no DLL of the toolchain's beside it.
+LIBS = -lm $(shell $(CC) -print-file-name=libwinpthread.a) -lws2_32 -lbcrypt -lwinmm $(SDL_LIBS)
+# The VM runs on the main thread, whose stack size is fixed here.
+LDFLAGS += -Wl,--stack,8388608
+else
 LIBS = -lm -lpthread -lrt $(SDL_LIBS)
+endif
 # Drops the shared weak defaults this port overrides (and the TLSF calls inside them).
 LDFLAGS += -Wl,--gc-sections
 
@@ -129,13 +173,14 @@ OBJ += $(addprefix $(BUILD)/, $(SRC_CIRCUITPY_COMMON:.c=.o))
 OBJ += $(addprefix $(BUILD)/, $(SRC_MOD:.c=.o))
 OBJ += $(OBJ_MBEDTLS)
 
-SRC_QSTR += $(SRC_C) $(SRC_SUPERVISOR) $(SRC_CIRCUITPY_COMMON) \
+# mbedtls has no qstrs, and its headers do not take the qstr preprocessing flags.
+SRC_QSTR += $(filter-out $(SRC_MBEDTLS),$(SRC_C)) $(SRC_SUPERVISOR) $(SRC_CIRCUITPY_COMMON) \
 	$(SRC_COMMON_HAL_SHARED_MODULE_EXPANDED) $(SRC_MOD)
 SRC_QSTR_PREPROCESSOR +=
 
-all: $(BUILD)/circuitpython
+all: $(BUILD)/circuitpython$(EXE)
 
-$(BUILD)/circuitpython: $(OBJ)
+$(BUILD)/circuitpython$(EXE): $(OBJ)
 	$(STEPECHO) "LINK $@"
 	$(Q)echo $^ > $(BUILD)/firmware.objs
 	$(Q)$(CC) -o $@ $(LDFLAGS) @$(BUILD)/firmware.objs $(LIBS)

@@ -631,7 +631,11 @@ static bool _origin_ok(_request *request) {
             return true;
         }
         // DEBUG: OK if origin is 'localhost' (ignoring port #)
-        char *cptr = strchrnul(&request->origin[PREFIX_HTTP_LEN], ':');
+        // CIRCUITPY-CHANGE: strchr, as strchrnul is GNU-only
+        char *cptr = strchr(&request->origin[PREFIX_HTTP_LEN], ':');
+        if (cptr == NULL) {
+            cptr = &request->origin[PREFIX_HTTP_LEN] + strlen(&request->origin[PREFIX_HTTP_LEN]);
+        }
         char csave = *cptr; // NULL or colon
         *cptr = '\0';
         if (strcmp(&request->origin[PREFIX_HTTP_LEN], "localhost") == 0) {
@@ -1526,7 +1530,7 @@ static void _reset_request(_request *request) {
 static void _process_request(socketpool_socket_obj_t *socket, _request *request) {
     bool more = true;
     bool error = false;
-    uint8_t c;
+    uint8_t c = 0;      // CIRCUITPY-CHANGE: recv_into takes a const pointer, so clang cannot see the write
     // This code assumes header lines are terminated with \r\n
     while (more && !error) {
 

@@ -507,7 +507,11 @@ extern const struct _mp_obj_module_t nvm_module;
 #endif
 
 // We need to provide a declaration/definition of alloca()
+#ifdef _WIN32
+#include <malloc.h>
+#else
 #include <alloca.h>
+#endif
 
 #define MP_STATE_PORT MP_STATE_VM
 
@@ -757,7 +761,7 @@ void background_callback_run_all(void);
 #define CIRCUITPY_BOOT_BUTTON_ACTIVE_HIGH (0)
 #endif
 
-#if defined(__GNUC__) && !defined(__ZEPHYR__)
+#if defined(__GNUC__) && !defined(__ZEPHYR__) && !defined(__clang__)
 #if __GNUC__ < CIRCUITPY_MIN_GCC_VERSION
 // (the 3 level scheme here is required to get expansion & stringization
 // correct)

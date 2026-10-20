@@ -31,12 +31,21 @@
 #define MICROPY_HW_MCU_NAME                     "unknown"
 #endif
 
+// The register helper's x86-64 assembly is for the System V ABI; Windows uses setjmp instead.
+#ifdef _WIN32
+#define MICROPY_GCREGS_SETJMP                   (1)
+#endif
+
 // CIRCUITPY can be a host directory (VfsPosix) as well as a FAT image (--drive).
 #ifndef CIRCUITPY_FILESYSTEM_POSIX
 #define CIRCUITPY_FILESYSTEM_POSIX              (1)
 #endif
-// VfsPosix's statvfs, for os.statvfs() on a directory CIRCUITPY.
+// VfsPosix's statvfs, for os.statvfs() on a directory CIRCUITPY; Windows has no statvfs().
+#ifdef _WIN32
+#define MICROPY_PY_OS_STATVFS                   (0)
+#else
 #define MICROPY_PY_OS_STATVFS                   (1)
+#endif
 
 // Also includes mpconfigboard.h
 #include "py/circuitpy_mpconfig.h"

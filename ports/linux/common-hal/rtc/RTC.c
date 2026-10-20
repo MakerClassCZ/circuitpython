@@ -17,7 +17,11 @@ static int64_t _offset;
 void common_hal_rtc_get_time(timeutils_struct_time_t *tm) {
     time_t now = time(NULL) + _offset;
     struct tm local;
+    #ifdef _WIN32
+    localtime_s(&local, &now);
+    #else
     localtime_r(&now, &local);
+    #endif
     tm->tm_year = local.tm_year + 1900;
     tm->tm_mon = local.tm_mon + 1;
     tm->tm_mday = local.tm_mday;

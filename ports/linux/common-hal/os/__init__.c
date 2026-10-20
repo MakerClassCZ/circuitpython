@@ -4,10 +4,19 @@
 //
 // SPDX-License-Identifier: MIT
 
-#include <sys/random.h>
-
 #include "py/mpconfig.h"
 #include "shared-bindings/os/__init__.h"
+
+#ifdef _WIN32
+#include <windows.h>
+#include <bcrypt.h>
+
+bool common_hal_os_urandom(uint8_t *buffer, mp_uint_t length) {
+    return BCRYPT_SUCCESS(BCryptGenRandom(NULL, buffer, length, BCRYPT_USE_SYSTEM_PREFERRED_RNG));
+}
+
+#else
+#include <sys/random.h>
 
 bool common_hal_os_urandom(uint8_t *buffer, mp_uint_t length) {
     while (length > 0) {
@@ -20,3 +29,4 @@ bool common_hal_os_urandom(uint8_t *buffer, mp_uint_t length) {
     }
     return true;
 }
+#endif

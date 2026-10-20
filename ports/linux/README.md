@@ -1,9 +1,9 @@
-# CircuitPython for Linux
+# CircuitPython for Linux and Windows
 
-CircuitPython as a Linux program: the supervisor, the VM and the CIRCUITPY drive run in one
-process, the terminal is the serial console, and SDL2 provides the display, the buttons and the
-sound. It is meant for Linux handhelds (Miyoo, Anbernic and the like) and as a fast way to run
-CircuitPython code on a desktop. This port is experimental.
+CircuitPython as a program: the supervisor, the VM and the CIRCUITPY drive run in one process,
+the terminal is the serial console, and SDL2 provides the display, the buttons and the sound. It
+is meant for Linux handhelds (Miyoo, Anbernic and the like) and as a fast way to run
+CircuitPython code on a desktop, Linux or Windows. This port is experimental.
 
 ## Build
 
@@ -15,6 +15,17 @@ make CC="gcc -m32" BUILD=build-desktop-i386     # a 32-bit build on a 64-bit PC
 ```
 
 Another SDL2 can be given with `SDL_CFLAGS` and `SDL_LIBS`.
+
+The Windows program is a cross build from Linux with [llvm-mingw](https://github.com/mstorsjo/llvm-mingw)
+and the MinGW development package of SDL2 from [libsdl.org](https://github.com/libsdl-org/SDL/releases):
+
+```
+make BUILD=build-windows CROSS_COMPILE=x86_64-w64-mingw32- SDL_DIR=/path/to/SDL2-2.32.8/x86_64-w64-mingw32
+```
+
+`build-windows/circuitpython.exe` runs on Windows 10 and 11 with `SDL2.dll` from the same SDL2
+package beside it; the C runtime and winpthreads are built in. A crash prints an address that
+`x86_64-w64-mingw32-addr2line -f -e build-windows/circuitpython.exe 0x...` resolves.
 
 ## Run
 
@@ -33,6 +44,9 @@ and host edits stop reloading `code.py`. Unlike FAT, file names are case-sensiti
 `storage.erase_filesystem()` leaves the directory as it is. `storage.map_file()` maps a file of
 the directory straight into memory.
 
+On Windows the drive is `.\CIRCUITPY` by default and any path works, `C:\Users\me\game` as well
+as a relative one.
+
 `--drive` can also name a FAT image file. A missing path ending in `.img` becomes a new image of
 `--drive-size` MB, formatted like a blank board. The host reads and writes an image with mtools or
 a loop mount, but only while CircuitPython is not running:
@@ -43,9 +57,11 @@ mcopy -i CIRCUITPY.img -s -o mygame/* ::/
 ```
 
 The console works as on a board: Ctrl-C interrupts, Ctrl-D reloads, any key enters the REPL.
-Ctrl-\ or closing the window powers off. `microcontroller.reset()` restarts the process, and a crash restarts it in safe
-mode with a backtrace on stderr; `addr2line -f -e build-desktop/circuitpython 0x...` turns its
-`circuitpython(+0x...)` lines into function names.
+Ctrl-\ or closing the window powers off. `microcontroller.reset()` restarts the process, and a
+crash restarts it in safe mode with a backtrace on stderr; `addr2line -f -e
+build-desktop/circuitpython 0x...` turns its `circuitpython(+0x...)` lines into function names. A
+second crash right after such a restart ends the program instead. On Windows a reset starts a new
+process and the old one waits for it, so after sixteen resets in a row the program ends.
 
 ## Display, buttons and sound
 
@@ -104,6 +120,7 @@ program headless.
 ## Not yet
 
 - Native `.mpy` files (turbo): loading them needs executable memory.
+- On Windows: `audiomp3` (its decoder's inline assembly is for MSVC) and `os.statvfs()`.
 - `wifi` itself, mDNS and BLE: code that calls `wifi.radio` needs `hostnetwork.HostNetwork()`
   instead.
 - `busio` and USB.

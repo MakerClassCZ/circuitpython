@@ -65,6 +65,7 @@ CIRCUITPY_MESSAGE_COMPRESSION_LEVEL ?= 9
 # By default, use our copy of TLSF. Some vendor SDKs may provide their own
 # implementation of TLSF, which can be used instead by setting CIRCUITPY_LIB_TLSF=0.
 CIRCUITPY_LIB_TLSF ?= 1
+CFLAGS += -DCIRCUITPY_LIB_TLSF=$(CIRCUITPY_LIB_TLSF)
 
 # By default, use our copy of string0 (memcpy and friends) because it is optimized. Some vendor SDKs
 # or ROMs may provide their own implementation of string0, which can be used instead by setting
