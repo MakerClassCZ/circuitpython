@@ -38,8 +38,12 @@ CIRCUITPY_TOUCHIO = 0
 CIRCUITPY_PIXELBUF = 0
 CIRCUITPY_PARALLELDISPLAYBUS = 0
 
-# First milestone: no display yet.
-CIRCUITPY_DISPLAYIO = 0
+# The display is an SDL2 window or screen (bindings/sdl); the SPI and I2C display buses have no
+# hardware here.
+CIRCUITPY_SDL = 1
+CIRCUITPY_FOURWIRE = 0
+CIRCUITPY_I2CDISPLAYBUS = 0
+CIRCUITPY_SHARPDISPLAY = 0
 
 # The port heap is the system allocator with a budget (supervisor/port.c); the bundled TLSF is
 # 32-bit only.

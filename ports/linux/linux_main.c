@@ -17,6 +17,7 @@
 #include <unistd.h>
 
 #include "linux_port.h"
+#include "sdl_host.h"
 
 int circuitpython_main(void);
 
@@ -103,8 +104,17 @@ int main(int argc, char **argv) {
     sigaddset(&stop, SIGTERM);
     sigaddset(&stop, SIGHUP);
     sigaddset(&stop, SIGQUIT);
-    int sig = 0;
-    while (sigwait(&stop, &sig) != 0) {
+    sigaddset(&stop, SIGUSR1);
+    for (;;) {
+        int sig = 0;
+        if (sigwait(&stop, &sig) != 0) {
+            continue;
+        }
+        if (sig == SIGUSR1) {
+            // kill -USR1 saves the next frame as a screenshot
+            linux_sdl_request_screenshot();
+            continue;
+        }
+        linux_power_off(128 + sig);
     }
-    linux_power_off(128 + sig);
 }

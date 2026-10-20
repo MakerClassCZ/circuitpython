@@ -5,6 +5,7 @@
 // SPDX-License-Identifier: MIT
 
 #include "shared-bindings/board/__init__.h"
+#include "shared-module/displayio/__init__.h"
 
 // The buttons use the PicoPad's names, so games written for it run unchanged.
 static const mp_rom_map_elem_t board_module_globals_table[] = {
@@ -23,5 +24,7 @@ static const mp_rom_map_elem_t board_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR_SW_L), MP_ROM_PTR(&pin_GPIO10) },
     { MP_ROM_QSTR(MP_QSTR_SW_R), MP_ROM_PTR(&pin_GPIO11) },
     { MP_ROM_QSTR(MP_QSTR_SW_MENU), MP_ROM_PTR(&pin_GPIO12) },
+
+    { MP_ROM_QSTR(MP_QSTR_DISPLAY), MP_ROM_PTR(&displays[0].framebuffer_display) },
 };
 MP_DEFINE_CONST_DICT(board_module_globals, board_module_globals_table);

@@ -16,7 +16,20 @@
 #define MICROPY_OBJ_REPR                        (MICROPY_OBJ_REPR_A)
 #endif
 
-#define MICROPY_HW_MCU_NAME                     LINUX_MACHINE
+// The processor the binary was built for.
+#if defined(__x86_64__)
+#define MICROPY_HW_MCU_NAME                     "x86_64"
+#elif defined(__i386__)
+#define MICROPY_HW_MCU_NAME                     "i386"
+#elif defined(__aarch64__)
+#define MICROPY_HW_MCU_NAME                     "aarch64"
+#elif defined(__arm__)
+#define MICROPY_HW_MCU_NAME                     "arm"
+#elif defined(__riscv)
+#define MICROPY_HW_MCU_NAME                     "riscv"
+#else
+#define MICROPY_HW_MCU_NAME                     "unknown"
+#endif
 
 // Also includes mpconfigboard.h
 #include "py/circuitpy_mpconfig.h"

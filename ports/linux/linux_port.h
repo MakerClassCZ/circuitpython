@@ -35,5 +35,17 @@ void linux_wake_vm(void);
 // Block until an interrupt signal arrives or timeout_ms passes (-1 = no timeout).
 void linux_wait_for_interrupt(int timeout_ms);
 
+// The console's buttons, in board pin order (GPIO0 = UP ... GPIO12 = MENU).
+enum {
+    LINUX_BUTTON_UP, LINUX_BUTTON_DOWN, LINUX_BUTTON_LEFT, LINUX_BUTTON_RIGHT,
+    LINUX_BUTTON_A, LINUX_BUTTON_B, LINUX_BUTTON_X, LINUX_BUTTON_Y,
+    LINUX_BUTTON_START, LINUX_BUTTON_SELECT, LINUX_BUTTON_L, LINUX_BUTTON_R, LINUX_BUTTON_MENU,
+    LINUX_BUTTON_COUNT
+};
+
+// A button pulls its pin low while pressed, like a button to ground.
+void linux_button_set(int button, bool pressed);
+void linux_buttons_release_all(void);
+
 void linux_serial_restore(void);
 __attribute__((noreturn)) void linux_power_off(int status);

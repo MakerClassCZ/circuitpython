@@ -5,3 +5,12 @@
 // SPDX-License-Identifier: MIT
 
 #include "supervisor/board.h"
+#include "common-hal/sdl/Framebuffer.h"
+
+#include "linux_port.h"
+
+void board_init(void) {
+    linux_buttons_release_all();
+    // A 320x240 picture in a window twice its size.
+    sdl_framebuffer_autoconstruct(320, 240, 2, false);
+}
