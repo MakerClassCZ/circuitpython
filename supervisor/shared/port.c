@@ -45,6 +45,9 @@ MP_WEAK void port_task_sleep_ms(uint32_t msecs) {
 MP_WEAK void port_boot_info(void) {
 }
 
+MP_WEAK void port_before_user_code(void) {
+}
+
 #if CIRCUITPY_LIB_TLSF
 MP_WEAK void port_heap_init(void) {
     uint32_t *heap_bottom = port_heap_get_bottom();

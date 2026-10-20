@@ -22,6 +22,7 @@ INC += \
 
 SRC_C += \
 	background.c \
+	debug_hook.c \
 	interrupts.c \
 	linux_main.c \
 	linux_pins.c \
@@ -178,7 +179,11 @@ SRC_QSTR += $(filter-out $(SRC_MBEDTLS),$(SRC_C)) $(SRC_SUPERVISOR) $(SRC_CIRCUI
 	$(SRC_COMMON_HAL_SHARED_MODULE_EXPANDED) $(SRC_MOD)
 SRC_QSTR_PREPROCESSOR +=
 
-all: $(BUILD)/circuitpython$(EXE)
+all: $(BUILD)/circuitpython$(EXE) $(BUILD)/debugadapter.py
+
+# The debug adapter lives beside the program (see debug_hook.c).
+$(BUILD)/debugadapter.py: python/debugadapter.py
+	$(Q)cp $< $@
 
 $(BUILD)/circuitpython$(EXE): $(OBJ)
 	$(STEPECHO) "LINK $@"

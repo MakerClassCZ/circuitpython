@@ -504,6 +504,10 @@ static bool __attribute__((noinline)) run_code_py(safe_mode_t safe_mode, bool *s
         usb_setup_with_vm();
         #endif
 
+        // CIRCUITPY-CHANGE: a port may run code of its own in the fresh VM before the user's,
+        // such as a debugger that will trace it.
+        port_before_user_code();
+
         // Check if a different run file has been allocated
         if (next_code_configuration != NULL) {
             next_code_configuration->options &= ~SUPERVISOR_NEXT_CODE_OPT_NEWLY_SET;

@@ -1,0 +1,106 @@
+{
+  "name": "circuitpython-host-debug",
+  "displayName": "CircuitPython host debugger",
+  "description": "Debug CircuitPython code running in the Linux and Windows build of CircuitPython: breakpoints, stepping, variables.",
+  "version": "0.1.0",
+  "publisher": "makerclass",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Debuggers"
+  ],
+  "activationEvents": [
+    "onDebugResolve:circuitpython"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "breakpoints": [
+      {
+        "language": "python"
+      }
+    ],
+    "debuggers": [
+      {
+        "type": "circuitpython",
+        "label": "CircuitPython (host)",
+        "languages": [
+          "python"
+        ],
+        "configurationAttributes": {
+          "launch": {
+            "required": [
+              "program"
+            ],
+            "properties": {
+              "program": {
+                "type": "string",
+                "description": "The circuitpython executable.",
+                "default": "circuitpython"
+              },
+              "drive": {
+                "type": "string",
+                "description": "The CIRCUITPY directory (or FAT image).",
+                "default": "${workspaceFolder}"
+              },
+              "port": {
+                "type": "number",
+                "description": "The debug adapter's TCP port.",
+                "default": 5678
+              },
+              "args": {
+                "type": "array",
+                "description": "More command line arguments, such as --ram 32.",
+                "default": []
+              }
+            }
+          },
+          "attach": {
+            "properties": {
+              "port": {
+                "type": "number",
+                "description": "The port the program was started with (--debug PORT).",
+                "default": 5678
+              }
+            }
+          }
+        },
+        "initialConfigurations": [
+          {
+            "type": "circuitpython",
+            "request": "launch",
+            "name": "CircuitPython: run code.py",
+            "program": "circuitpython",
+            "drive": "${workspaceFolder}",
+            "port": 5678
+          }
+        ],
+        "configurationSnippets": [
+          {
+            "label": "CircuitPython: run code.py",
+            "description": "Run the CIRCUITPY folder in the host build of CircuitPython under the debugger",
+            "body": {
+              "type": "circuitpython",
+              "request": "launch",
+              "name": "CircuitPython: run code.py",
+              "program": "^\"\\${workspaceFolder}/circuitpython\"",
+              "drive": "^\"\\${workspaceFolder}\"",
+              "port": 5678
+            }
+          },
+          {
+            "label": "CircuitPython: attach",
+            "description": "Attach to a program started with circuitpython --debug",
+            "body": {
+              "type": "circuitpython",
+              "request": "attach",
+              "name": "CircuitPython: attach",
+              "port": 5678
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -56,6 +56,7 @@ static void usage(const char *prog) {
         "                    a missing PATH is created, as an image if it ends in .img\n"
         "  --drive-size MB   size of a newly created image (default 16)\n"
         "  --ram MB          heap for CircuitPython (default 16)\n"
+        "  --debug [PORT]    wait for a debugger (VS Code) on 127.0.0.1:PORT before code.py (default 5678)\n"
         "Ctrl-\\ on the console powers off.\n", prog);
 }
 
@@ -134,6 +135,11 @@ int main(int argc, char **argv) {
             linux_options.drive_size = parse_mib(argv[++i], argv[0]);
         } else if (strcmp(argv[i], "--ram") == 0 && i + 1 < argc) {
             linux_options.ram_size = parse_mib(argv[++i], argv[0]);
+        } else if (strcmp(argv[i], "--debug") == 0) {
+            linux_options.debug_port = 5678;
+            if (i + 1 < argc && isdigit((unsigned char)argv[i + 1][0])) {
+                linux_options.debug_port = atoi(argv[++i]);
+            }
         } else {
             usage(argv[0]);
             return strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0 ? 0 : 2;
@@ -148,6 +154,31 @@ int main(int argc, char **argv) {
         return 1;
     }
     linux_options.start_dir = start_dir;
+
+    // The program's own directory: the debug adapter is a Python file kept beside it.
+    static char exe_dir[PATH_MAX];
+    #ifdef _WIN32
+    DWORD exe_len = GetModuleFileNameA(NULL, exe_dir, sizeof(exe_dir));
+    #else
+    ssize_t exe_len = readlink("/proc/self/exe", exe_dir, sizeof(exe_dir) - 1);
+    #endif
+    if (exe_len > 0 && (size_t)exe_len < sizeof(exe_dir)) {
+        exe_dir[exe_len] = '\0';
+        char *slash = strrchr(exe_dir, '/');
+        #ifdef _WIN32
+        char *backslash = strrchr(exe_dir, '\\');
+        if (backslash != NULL && (slash == NULL || backslash > slash)) {
+            slash = backslash;
+        }
+        #endif
+        if (slash != NULL) {
+            *slash = '\0';
+        }
+    } else {
+        snprintf(exe_dir, sizeof(exe_dir), ".");
+    }
+    linux_options.exe_dir = exe_dir;
+
     int len = is_absolute(linux_options.drive_path)
         ? snprintf(drive_path, sizeof(drive_path), "%s", linux_options.drive_path)
         : snprintf(drive_path, sizeof(drive_path), "%s/%s", start_dir, linux_options.drive_path);

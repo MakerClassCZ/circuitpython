@@ -16,6 +16,8 @@ typedef struct {
     const char *start_dir;      // the working directory at start; VfsPosix changes it
     size_t drive_size;          // bytes, used only when the image is created
     size_t ram_size;            // bytes of RAM for the port heap
+    int debug_port;             // --debug: the debug adapter's TCP port, 0 = none
+    const char *exe_dir;        // the program's own directory, where debugadapter.py lives
     char **argv;                // reset re-executes the process with these
 } linux_options_t;
 
