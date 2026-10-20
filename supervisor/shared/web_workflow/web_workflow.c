@@ -5,8 +5,11 @@
 // SPDX-License-Identifier: MIT
 
 // Include strchrnul()
+#ifndef _GNU_SOURCE
 #define _GNU_SOURCE
+#endif
 
+#include <inttypes.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
@@ -18,7 +21,9 @@
 #include "py/mpstate.h"
 #include "py/persistentcode.h"
 
+#if CIRCUITPY_WIFI
 #include "shared-bindings/wifi/Radio.h"
+#endif
 #include "supervisor/filesystem.h"
 #include "supervisor/port.h"
 #include "supervisor/shared/reload.h"

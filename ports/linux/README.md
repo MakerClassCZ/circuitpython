@@ -32,7 +32,8 @@ mcopy -i CIRCUITPY.img -s -o mygame/* ::/
 ```
 
 Write to the image only while CircuitPython is not running: the program has it mounted, as a board
-has its flash.
+has its flash. While it runs, edit files through the web workflow (below), which also reloads
+`code.py` after a change.
 
 The console works as on a board: Ctrl-C interrupts, Ctrl-D reloads, any key enters the REPL.
 Ctrl-\ powers off. `microcontroller.reset()` restarts the process, and a crash restarts it in safe
@@ -68,6 +69,24 @@ controller, which is how SDL reports a handheld's own buttons, or the keyboard:
 F12 or `kill -USR1` saves a screenshot, `screenshot-NNN.bmp` or the file named by
 `CIRCUITPY_SCREENSHOT`.
 
+## Network
+
+The host's network is a network interface like `wifi.radio`:
+
+```
+import hostnetwork, socketpool, ssl
+pool = socketpool.SocketPool(hostnetwork.HostNetwork())
+context = ssl.create_default_context()     # for adafruit_requests and other TLS code
+```
+
+TCP, UDP, DNS and TLS with the usual root certificates work. An accepted socket starts
+non-blocking, as on the ESP32 port.
+
+With `CIRCUITPY_WEB_API_PASSWORD` in `settings.toml` the web workflow serves the drive, the
+serial console and the file editor at `http://127.0.0.1:8080` when
+`CIRCUITPY_WEB_API_PORT = 8080` is set too (port 80 needs root). It listens on every interface,
+as a board on Wi-Fi does, so other machines on the network reach it with the password.
+
 ## Without a screen
 
 `SDL_VIDEODRIVER=dummy` runs without a display and `SDL_AUDIODRIVER=disk` writes the sound to a
@@ -78,7 +97,10 @@ program headless.
 ## Not yet
 
 - Native `.mpy` files (turbo): loading them needs executable memory.
-- Files written from the host while CircuitPython runs are not noticed; there is no auto-reload.
-- `busio`, networking, USB and the web workflow.
+- Files written into the image from the host while CircuitPython runs are not noticed; use the
+  web workflow.
+- `wifi` itself, mDNS and BLE: code that calls `wifi.radio` needs `hostnetwork.HostNetwork()`
+  instead.
+- `busio` and USB.
 - Builds and packages for handhelds: the port needs a cross compiler with the device's SDL2
   (PortMaster for Anbernic and others, the OnionOS toolchain for the Miyoo Mini).
