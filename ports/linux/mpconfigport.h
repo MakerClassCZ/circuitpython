@@ -31,6 +31,10 @@
 #define MICROPY_HW_MCU_NAME                     "unknown"
 #endif
 
+// The Python call stack: a board's 2 KB would end a traced program early, since the debugger
+// adds frames of its own above every call of the user's.
+#define CIRCUITPY_PYSTACK_SIZE                  (256 * 1024)
+
 // sys.settrace, the hook a debugger steps and inspects with; a host can afford its cost.
 #define MICROPY_PY_SYS_SETTRACE                 (1)
 
