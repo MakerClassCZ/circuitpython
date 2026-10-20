@@ -13,16 +13,18 @@
 #include "common-hal/audioio/AudioOut.h"
 #endif
 
+// Once per tick (1024 Hz while the display or sound keeps the tick on): window events, frames and
+// the audio queue. port_background_task() runs at every VM loop hook, far too often for these.
 void port_background_tick(void) {
-}
-
-void port_background_task(void) {
     #if CIRCUITPY_SDL
     linux_sdl_task();
     #endif
     #if CIRCUITPY_AUDIOIO
     audioout_background();
     #endif
+}
+
+void port_background_task(void) {
 }
 
 void port_start_background_tick(void) {
