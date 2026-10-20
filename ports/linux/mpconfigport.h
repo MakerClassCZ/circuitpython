@@ -31,6 +31,9 @@
 #define MICROPY_HW_MCU_NAME                     "unknown"
 #endif
 
+// sys.settrace, the hook a debugger steps and inspects with; a host can afford its cost.
+#define MICROPY_PY_SYS_SETTRACE                 (1)
+
 // The register helper's x86-64 assembly is for the System V ABI; Windows uses setjmp instead.
 #ifdef _WIN32
 #define MICROPY_GCREGS_SETJMP                   (1)
