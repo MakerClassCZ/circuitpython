@@ -7,7 +7,6 @@
 #include <SDL.h>
 #include <limits.h>
 #include <pthread.h>
-#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -120,9 +119,6 @@ static void _save_screenshot(void) {
 // CIRCUITPY_SDL_KEYS names a file or FIFO of lines "down KEY", "up KEY" (SDL key names such as
 // Z or Right) and "sleep MS"; they arrive as key events, so a test can play a program headless.
 static void *_key_script(void *arg) {
-    sigset_t all;
-    sigfillset(&all);
-    pthread_sigmask(SIG_BLOCK, &all, NULL);
     FILE *f = fopen((const char *)arg, "r");
     if (f == NULL) {
         fprintf(stderr, "circuitpython: cannot open %s\r\n", (const char *)arg);

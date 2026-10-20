@@ -125,8 +125,8 @@ int main(int argc, char **argv) {
         linux_options.drive_path = drive_path;
     }
 
-    // Every thread starts with all signals blocked: port_init() unblocks the interrupt signals on
-    // this thread, and the signal thread waits for the termination ones.
+    // Every thread starts with all signals blocked: port_init() unblocks the fault signals on this
+    // thread, and the signal thread waits for the termination ones.
     sigset_t all;
     sigfillset(&all);
     pthread_sigmask(SIG_BLOCK, &all, NULL);
@@ -145,8 +145,6 @@ int main(int argc, char **argv) {
     }
     linux_stack_top = (uint8_t *)__builtin_frame_address(0);
     linux_stack_bottom = (uint8_t *)(grow_stack(stack_size) + PAGE);
-    linux_vm_thread = pthread_self();
-
     circuitpython_main();
     linux_power_off(0);
 }

@@ -22,6 +22,7 @@ INC += \
 
 SRC_C += \
 	background.c \
+	interrupts.c \
 	linux_main.c \
 	linux_pins.c \
 	linux_watch.c \

@@ -4,7 +4,6 @@
 //
 // SPDX-License-Identifier: MIT
 
-#include <signal.h>
 #include <time.h>
 
 #include "py/mphal.h"
@@ -19,35 +18,21 @@
 #include "supervisor/port.h"
 #include "supervisor/shared/safe_mode.h"
 
+#include "linux_port.h"
+
 void common_hal_mcu_delay_us(uint32_t delay) {
     struct timespec t = { delay / 1000000, (delay % 1000000) * 1000L };
     while (nanosleep(&t, &t) != 0) {
     }
 }
 
-// Interrupts are the tick and wake signals; disabling them blocks the signals on this thread.
-static volatile uint32_t _nesting;
-static sigset_t _saved_mask;
-
+// Interrupts are the timer thread's; disabling them holds its lock (interrupts.c).
 void common_hal_mcu_disable_interrupts(void) {
-    sigset_t irq, old;
-    sigemptyset(&irq);
-    sigaddset(&irq, SIGRTMIN);
-    sigaddset(&irq, SIGRTMIN + 1);
-    sigaddset(&irq, SIGRTMIN + 2);
-    pthread_sigmask(SIG_BLOCK, &irq, &old);
-    if (_nesting++ == 0) {
-        _saved_mask = old;
-    }
+    linux_irq_disable();
 }
 
 void common_hal_mcu_enable_interrupts(void) {
-    if (_nesting == 0) {
-        reset_into_safe_mode(SAFE_MODE_INTERRUPT_ERROR);
-    }
-    if (--_nesting == 0) {
-        pthread_sigmask(SIG_SETMASK, &_saved_mask, NULL);
-    }
+    linux_irq_enable();
 }
 
 static bool _next_reset_to_bootloader;

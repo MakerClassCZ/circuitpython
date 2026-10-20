@@ -4,30 +4,25 @@
 //
 // SPDX-License-Identifier: MIT
 
-// The supervisor on a POSIX host. Interrupts are real-time signals delivered to the VM thread:
-// one periodic timer is the 1024 Hz tick, a one-shot timer is the wake-up alarm, and "disabling
-// interrupts" blocks both signals.
+// The supervisor on a POSIX host: the process, its memory and its clock. Interrupts live in
+// interrupts.c.
 
 #include <errno.h>
 #include <execinfo.h>
 #include <malloc.h>
-#include <poll.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
-#include <sys/syscall.h>
 #include <time.h>
 #include <unistd.h>
 
-#include "supervisor/background_callback.h"
 #include "supervisor/board.h"
 #include "supervisor/filesystem.h"
 #include "supervisor/port.h"
 #include "supervisor/shared/safe_mode.h"
 #include "supervisor/shared/tick.h"
-#include "supervisor/workflow.h"
 #include "shared-bindings/microcontroller/__init__.h"
 #include "shared-bindings/rtc/__init__.h"
 #if CIRCUITPY_AUDIOIO
@@ -37,40 +32,13 @@
 
 #include "linux_port.h"
 
-#ifndef sigev_notify_thread_id
-#define sigev_notify_thread_id _sigev_un._tid
-#endif
-
-#define TICK_SIGNAL (SIGRTMIN)
-#define WAKE_SIGNAL (SIGRTMIN + 1)
-#define POLL_SIGNAL (SIGRTMIN + 2)
 #define SAVED_WORD_ENV "CIRCUITPY_LINUX_SAVED_WORD"
 
-pthread_t linux_vm_thread;
 bool linux_was_reset;
 
 static size_t _ram_used;
 static uint32_t _saved_word;
 static struct timespec _start;
-static timer_t _tick_timer;
-static timer_t _wake_timer;
-static timer_t _poll_timer;
-static volatile sig_atomic_t _woken;
-static sigset_t _irq_signals;
-
-static void _on_interrupt(int sig, siginfo_t *info, void *context) {
-    (void)info;
-    (void)context;
-    if (sig == TICK_SIGNAL) {
-        supervisor_tick();
-    }
-    #if CIRCUITPY_SOCKETPOOL
-    if (sig == POLL_SIGNAL) {
-        supervisor_workflow_request_background();
-    }
-    #endif
-    _woken = 1;
-}
 
 // A crash is the host's hard fault: report where on stderr, then restart into safe mode.
 static void _on_fault(int sig) {
@@ -79,16 +47,6 @@ static void _on_fault(int sig) {
     void *frames[32];
     backtrace_symbols_fd(frames, backtrace(frames, 32), STDERR_FILENO);
     reset_into_safe_mode(SAFE_MODE_HARD_FAULT);
-}
-
-static void _set_timer(timer_t timer, uint64_t ns, bool periodic) {
-    struct itimerspec spec = {0};
-    spec.it_value.tv_sec = ns / 1000000000u;
-    spec.it_value.tv_nsec = ns % 1000000000u;
-    if (periodic) {
-        spec.it_interval = spec.it_value;
-    }
-    timer_settime(timer, 0, &spec, NULL);
 }
 
 safe_mode_t port_init(void) {
@@ -117,36 +75,7 @@ safe_mode_t port_init(void) {
     sigaddset(&faults, SIGFPE);
     pthread_sigmask(SIG_UNBLOCK, &faults, NULL);
 
-    sigemptyset(&_irq_signals);
-    sigaddset(&_irq_signals, TICK_SIGNAL);
-    sigaddset(&_irq_signals, WAKE_SIGNAL);
-    sigaddset(&_irq_signals, POLL_SIGNAL);
-
-    struct sigaction action = {0};
-    action.sa_sigaction = _on_interrupt;
-    action.sa_flags = SA_SIGINFO | SA_RESTART;
-    action.sa_mask = _irq_signals;              // one interrupt at a time
-    sigaction(TICK_SIGNAL, &action, NULL);
-    sigaction(WAKE_SIGNAL, &action, NULL);
-    sigaction(POLL_SIGNAL, &action, NULL);
-
-    struct sigevent event = {0};
-    event.sigev_notify = SIGEV_THREAD_ID;
-    event.sigev_notify_thread_id = syscall(SYS_gettid);
-    event.sigev_signo = TICK_SIGNAL;
-    if (timer_create(CLOCK_MONOTONIC, &event, &_tick_timer) != 0) {
-        return SAFE_MODE_PROGRAMMATIC;
-    }
-    event.sigev_signo = WAKE_SIGNAL;
-    if (timer_create(CLOCK_MONOTONIC, &event, &_wake_timer) != 0) {
-        return SAFE_MODE_PROGRAMMATIC;
-    }
-    event.sigev_signo = POLL_SIGNAL;
-    if (timer_create(CLOCK_MONOTONIC, &event, &_poll_timer) != 0) {
-        return SAFE_MODE_PROGRAMMATIC;
-    }
-    pthread_sigmask(SIG_UNBLOCK, &_irq_signals, NULL);
-    return SAFE_MODE_NONE;
+    return linux_interrupts_init() ? SAFE_MODE_NONE : SAFE_MODE_PROGRAMMATIC;
 }
 
 void reset_port(void) {
@@ -261,46 +190,6 @@ uint64_t port_get_raw_ticks(uint8_t *subticks) {
         *subticks = sub & 31;
     }
     return sub >> 5;
-}
-
-void port_enable_tick(void) {
-    _set_timer(_tick_timer, 1000000000u / 1024, true);
-}
-
-void port_disable_tick(void) {
-    _set_timer(_tick_timer, 0, false);
-}
-
-void port_interrupt_after_ticks(uint32_t ticks) {
-    uint64_t ns = (uint64_t)ticks * 1000000000u / 1024;
-    _set_timer(_wake_timer, ns > 0 ? ns : 1000, false);
-}
-
-void linux_request_workflow_poll(uint32_t ms) {
-    _set_timer(_poll_timer, (uint64_t)ms * 1000000u, false);
-}
-
-void linux_wait_for_interrupt(int timeout_ms) {
-    sigset_t old;
-    pthread_sigmask(SIG_BLOCK, &_irq_signals, &old);
-    if (!_woken && !background_callback_pending()) {
-        sigset_t open = old;
-        sigdelset(&open, TICK_SIGNAL);
-        sigdelset(&open, WAKE_SIGNAL);
-        sigdelset(&open, POLL_SIGNAL);
-        struct timespec timeout = { timeout_ms / 1000, (timeout_ms % 1000) * 1000000L };
-        ppoll(NULL, 0, timeout_ms < 0 ? NULL : &timeout, &open);
-    }
-    _woken = 0;
-    pthread_sigmask(SIG_SETMASK, &old, NULL);
-}
-
-void port_idle_until_interrupt(void) {
-    linux_wait_for_interrupt(-1);
-}
-
-void linux_wake_vm(void) {
-    pthread_kill(linux_vm_thread, WAKE_SIGNAL);
 }
 
 void port_gc_collect(void) {

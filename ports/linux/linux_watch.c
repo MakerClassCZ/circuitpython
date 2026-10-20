@@ -14,7 +14,6 @@
 #include <ftw.h>
 #include <limits.h>
 #include <pthread.h>
-#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -58,9 +57,6 @@ static int _visit(const char *path, const struct stat *st, int type, struct FTW 
 }
 
 static void *_watch(void *arg) {
-    sigset_t all;
-    sigfillset(&all);
-    pthread_sigmask(SIG_BLOCK, &all, NULL);
     nftw((const char *)arg, _visit, 16, FTW_ACTIONRETVAL | FTW_PHYS);
     char buf[4096] __attribute__((aligned(__alignof__(struct inotify_event))));
     for (;;) {

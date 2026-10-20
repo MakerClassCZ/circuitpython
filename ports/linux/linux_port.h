@@ -6,7 +6,6 @@
 
 #pragma once
 
-#include <pthread.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -26,11 +25,13 @@ extern linux_options_t linux_options;
 extern uint8_t *linux_stack_bottom;
 extern uint8_t *linux_stack_top;
 
-// The VM thread (the process's main thread); other threads wake it like an interrupt would.
-extern pthread_t linux_vm_thread;
-
 // The process was restarted by reset_cpu() rather than started fresh.
 extern bool linux_was_reset;
+
+// Interrupts (interrupts.c): the timer thread, its lock, and waking the VM out of idle.
+bool linux_interrupts_init(void);
+void linux_irq_disable(void);
+void linux_irq_enable(void);
 void linux_wake_vm(void);
 
 // Run the workflow's background poll after ms, from a timer interrupt.
