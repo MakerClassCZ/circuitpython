@@ -19,6 +19,7 @@ import time
 import atexit
 import hostnetwork
 import socketpool
+import supervisor
 
 _OWN_FILES = ("debugadapter.py", "<debug>")
 _POLL_NS = 50000000     # how often the running program looks for editor requests
@@ -247,9 +248,13 @@ class Adapter:
         self.resumed = True
 
     def on_terminate(self, request, args):
+        # Stop in the editor reloads the program, which then waits for the editor again, so the
+        # next start connects to it.
         self.respond(request)
         self.terminate_requested = True
         self.resumed = True
+        if self.frame is None:
+            supervisor.reload()
 
     def on_continue(self, request, args):
         self.respond(request, {"allThreadsContinued": True})
@@ -423,8 +428,7 @@ class Adapter:
         self.frames = []
         self.handles = []
         if self.terminate_requested:
-            self.finish()
-            raise SystemExit
+            supervisor.reload()
 
     def trace(self, frame, event, arg):
         if _basename(frame.f_code.co_filename) in _OWN_FILES:
