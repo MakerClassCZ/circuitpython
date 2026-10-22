@@ -57,7 +57,8 @@ mcopy -i CIRCUITPY.img -s -o mygame/* ::/
 ```
 
 The console works as on a board: Ctrl-C interrupts, Ctrl-D reloads, any key enters the REPL.
-Ctrl-\ or closing the window powers off. `microcontroller.reset()` restarts the process, and a
+Ctrl-\, closing the window or `board.exit()` (from code or the REPL, with an optional exit
+status) ends the program. `microcontroller.reset()` restarts the process, and a
 crash restarts it in safe mode with a backtrace on stderr; `addr2line -f -e
 build-desktop/circuitpython 0x...` turns its `circuitpython(+0x...)` lines into function names. A
 second crash right after such a restart ends the program instead. On Windows a reset starts a new

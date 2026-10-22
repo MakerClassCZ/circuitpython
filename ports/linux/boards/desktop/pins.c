@@ -4,8 +4,17 @@
 //
 // SPDX-License-Identifier: MIT
 
+#include "py/runtime.h"
 #include "shared-bindings/board/__init__.h"
 #include "shared-module/displayio/__init__.h"
+
+#include "linux_port.h"
+
+// board.exit(status=0) ends the program: the way out of code or the REPL on a host.
+static mp_obj_t desktop_exit(size_t n_args, const mp_obj_t *args) {
+    linux_power_off(n_args > 0 ? mp_obj_get_int(args[0]) : 0);
+}
+static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(desktop_exit_obj, 0, 1, desktop_exit);
 
 // The buttons use the PicoPad's names, so games written for it run unchanged.
 static const mp_rom_map_elem_t board_module_globals_table[] = {
@@ -29,5 +38,7 @@ static const mp_rom_map_elem_t board_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR_SPEAKER), MP_ROM_PTR(&pin_GPIO13) },
 
     { MP_ROM_QSTR(MP_QSTR_DISPLAY), MP_ROM_PTR(&displays[0].framebuffer_display) },
+
+    { MP_ROM_QSTR(MP_QSTR_exit), MP_ROM_PTR(&desktop_exit_obj) },
 };
 MP_DEFINE_CONST_DICT(board_module_globals, board_module_globals_table);
