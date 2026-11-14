@@ -16,6 +16,7 @@
 #include "supervisor/port_heap.h"
 #include "shared-bindings/_bleio/__init__.h"
 #include "common-hal/_bleio/Adapter.h"
+#include "common-hal/_bleio/att.h"
 #include "common-hal/_bleio/hci.h"
 #include "common-hal/_bleio/hci_transport.h"
 
@@ -79,4 +80,7 @@ static const bleio_hci_transport_t cyw43_transport = {
 
 void bleio_cyw43_attach_adapter(void) {
     common_hal_bleio_adapter_construct_hci_transport(&common_hal_bleio_adapter_obj, &cyw43_transport, NULL);
+    // A write or a notification of up to 244 bytes in one packet; it fits hci.c's 255-byte
+    // reassembly buffer with its L2CAP header.
+    att_set_max_mtu(247);
 }

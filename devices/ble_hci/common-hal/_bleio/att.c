@@ -203,7 +203,9 @@ static void clear_slot(bleio_connection_internal_t *slot, uint8_t reason) {
 }
 
 void bleio_att_reset(void) {
+    #if !CIRCUITPY_BLEIO_HCI_TRANSPORT
     max_mtu = BT_ATT_DEFAULT_LE_MTU;
+    #endif
     timeout = 5000;
 
     for (size_t i = 0; i < BLEIO_TOTAL_CONNECTION_COUNT; i++) {
@@ -741,14 +743,27 @@ static void process_mtu_req(uint16_t conn_handle, uint8_t dlen, uint8_t data[]) 
         return;
     }
 
+    #if CIRCUITPY_BLEIO_HCI_TRANSPORT
+    // The port may set a larger receive MTU (att_set_max_mtu()). The link takes the smaller of
+    // the two; ours also fits one of the controller's ACL buffers with its L2CAP header.
+    uint16_t ours = MIN(max_mtu, common_hal_bleio_adapter_obj.max_acl_buffer_len - 4);
+    uint16_t theirs = ((struct bt_att_exchange_mtu_req *)data)->mtu;
+    for (size_t i = 0; i < BLEIO_TOTAL_CONNECTION_COUNT; i++) {
+        if (bleio_connections[i].conn_handle == conn_handle) {
+            bleio_connections[i].mtu = MAX(BT_ATT_DEFAULT_LE_MTU, MIN(ours, theirs));
+        }
+    }
+    #else
     // Our receive MTU is 23, so the link keeps 23.
+    const uint16_t ours = max_mtu;
+    #endif
     struct __packed {
         struct bt_att_hdr h;
         struct bt_att_exchange_mtu_rsp r;
     } rsp = { {
                   .code = BT_ATT_OP_MTU_RSP,
               }, {
-                  .mtu = max_mtu,
+                  .mtu = ours,
               }};
 
     hci_send_acl_pkt(conn_handle, BT_L2CAP_CID_ATT, sizeof(rsp), (uint8_t *)&rsp);
