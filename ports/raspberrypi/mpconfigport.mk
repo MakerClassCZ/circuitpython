@@ -74,6 +74,9 @@ CIRCUITPY_TOUCHIO ?= 1
 CIRCUITPY_CYW43_INIT_DELAY ?= 1000
 endif
 
+# _bleio over a CYW43439's Bluetooth core (common-hal/_bleio/cyw43_transport.c); a board turns it on.
+CIRCUITPY_BLEIO_CYW43 ?= 0
+
 ifeq ($(CHIP_VARIANT),RP2350)
 # RP2350 has PSRAM that is not DMA-capable
 CIRCUITPY_ALL_MEMORY_DMA_CAPABLE = 0

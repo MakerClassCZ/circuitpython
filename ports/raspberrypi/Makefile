@@ -33,7 +33,7 @@ CFLAGS_CYW43 := \
 	-DCYW43_LOGIC_DEBUG=0 \
 	-DCYW43_USE_STATS=0 \
 	-DPICO_BUILD \
-	-DCYW43_ENABLE_BLUETOOTH=0 \
+	-DCYW43_ENABLE_BLUETOOTH=$(CIRCUITPY_BLEIO_CYW43) \
 	-DCIRCUITPY_CYW43_INIT_DELAY=$(CIRCUITPY_CYW43_INIT_DELAY) \
 	-DPICO_CYW43_ARCH_POLL=0
 
@@ -64,6 +64,20 @@ SRC_CYW43 := \
 	lib/cyw43-driver/src/cyw43_ctrl.c \
 	lib/cyw43-driver/src/cyw43_ll.c \
 	lib/cyw43-driver/src/cyw43_lwip.c \
+
+# _bleio over the chip's Bluetooth core: devices/ble_hci's host, common-hal/_bleio's transport.
+ifeq ($(CIRCUITPY_BLEIO_CYW43),1)
+INC_CYW43 += -isystem sdk/src/rp2_common/pico_cyw43_driver/cybt_shared_bus/
+CFLAGS_CYW43 += -DCYW43_USE_HEX_BTFW=0
+SRC_SDK_CYW43 += \
+	src/rp2_common/pico_cyw43_driver/cybt_shared_bus/cybt_shared_bus.c \
+	src/rp2_common/pico_cyw43_driver/cybt_shared_bus/cybt_shared_bus_driver.c \
+
+SRC_CYW43 += \
+	common-hal/_bleio/cyw43_hci.c \
+	common-hal/_bleio/cyw43_transport.c \
+
+endif
 
 PIOASM = $(BUILD)/pioasm/pioasm/pioasm
 .PHONY: pioasmBuild
@@ -244,6 +258,7 @@ CFLAGS += $(OPTIMIZATION_FLAGS)
 # flags specific to wifi / cyw43
 
 CFLAGS += $(CFLAGS_CYW43)
+CFLAGS += -DCIRCUITPY_BLEIO_CYW43=$(CIRCUITPY_BLEIO_CYW43) -DCIRCUITPY_BLEIO_HCI_TRANSPORT=$(CIRCUITPY_BLEIO_CYW43)
 #Debugging/Optimization
 ifeq ($(DEBUG), 1)
   CFLAGS += -ggdb3 -Og

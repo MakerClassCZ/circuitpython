@@ -67,6 +67,9 @@
 #include "py/mphal.h"
 #include "pico/cyw43_arch.h"
 #endif
+#if CIRCUITPY_BLEIO_CYW43
+#include "common-hal/_bleio/cyw43_transport.h"
+#endif
 #include "pico/time.h"
 #include "pico/binary_info.h"
 
@@ -468,6 +471,13 @@ safe_mode_t port_init(void) {
         serial_write("WiFi init failed\n");
     } else {
         cyw_ever_init = true;
+    }
+    #endif
+    #if CIRCUITPY_BLEIO_CYW43
+    // _bleio.adapter is the board's own, over the chip's Bluetooth core; it comes on at first use.
+    // A chip that did not come up leaves _bleio.adapter None, as on a board without one.
+    if (cyw_ever_init) {
+        bleio_cyw43_attach_adapter();
     }
     #endif
     if (board_requests_safe_mode()) {
