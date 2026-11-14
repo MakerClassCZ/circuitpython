@@ -62,8 +62,14 @@ void bleio_reset(void) {
     if (!adapter->allocated) {
         return;
     }
-    // The adapter belongs to the program and its UART is on the VM heap: always free it.
     bleio_adapter_reset(adapter);
+    #if CIRCUITPY_BLEIO_HCI_TRANSPORT
+    if (adapter->persistent) {
+        // Disabled but still bound: enabling it again builds its attributes anew.
+        return;
+    }
+    #endif
+    // The adapter belongs to the program and its UART is on the VM heap: free it.
     adapter->allocated = false;
 
     bleio_set_adapter(mp_const_none);

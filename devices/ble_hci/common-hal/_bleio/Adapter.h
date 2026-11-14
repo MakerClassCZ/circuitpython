@@ -17,6 +17,7 @@
 #include "shared-bindings/_bleio/ScanResults.h"
 #include "shared-bindings/busio/UART.h"
 #include "shared-bindings/digitalio/DigitalInOut.h"
+#include "common-hal/_bleio/hci_transport.h"
 
 #ifndef BLEIO_TOTAL_CONNECTION_COUNT
 #define BLEIO_TOTAL_CONNECTION_COUNT 5
@@ -32,6 +33,12 @@ typedef struct _bleio_adapter_obj_t {
     busio_uart_obj_t *hci_uart;
     digitalio_digitalinout_obj_t *rts_digitalinout;
     digitalio_digitalinout_obj_t *cts_digitalinout;
+    #if CIRCUITPY_BLEIO_HCI_TRANSPORT
+    const bleio_hci_transport_t *hci_transport;
+    void *hci_transport_ctx;
+    // The port's own adapter: a reset disables it but keeps it bound to _bleio.adapter.
+    bool persistent;
+    #endif
     bool allocated;  // True when in use.
     bool now_advertising;
     bool circuitpython_advertising;

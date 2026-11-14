@@ -156,6 +156,13 @@ static void add_generic_services(bleio_adapter_obj_t *adapter) {
 
 static void check_enabled(bleio_adapter_obj_t *adapter) {
     if (!common_hal_bleio_adapter_get_enabled(adapter)) {
+        #if CIRCUITPY_BLEIO_HCI_TRANSPORT
+        // The port's own adapter comes on at its first use: adafruit_ble does not enable it.
+        if (adapter->persistent) {
+            common_hal_bleio_adapter_set_enabled(adapter, true);
+            return;
+        }
+        #endif
         mp_raise_bleio_BluetoothError(MP_ERROR_TEXT("Adapter not enabled"));
     }
 }
@@ -309,6 +316,11 @@ void common_hal_bleio_adapter_construct_hci_uart(bleio_adapter_obj_t *self, busi
     self->hci_uart = uart;
     self->rts_digitalinout = rts;
     self->cts_digitalinout = cts;
+    #if CIRCUITPY_BLEIO_HCI_TRANSPORT
+    self->hci_transport = &bleio_hci_uart_transport;
+    self->hci_transport_ctx = self;
+    self->persistent = false;
+    #endif
 
     // Advertising-related fields are initialized by common_hal_bleio_adapter_set_enabled().
     self->enabled = false;
@@ -317,6 +329,26 @@ void common_hal_bleio_adapter_construct_hci_uart(bleio_adapter_obj_t *self, busi
     // Not when enabling failed: the adapter is not kept.
     self->allocated = true;
 }
+
+#if CIRCUITPY_BLEIO_HCI_TRANSPORT
+void common_hal_bleio_adapter_construct_hci_transport(bleio_adapter_obj_t *self,
+    const bleio_hci_transport_t *transport, void *ctx) {
+    self->hci_transport = transport;
+    self->hci_transport_ctx = ctx;
+    self->persistent = true;
+    self->enabled = false;
+    self->allocated = true;
+    bleio_set_adapter(MP_OBJ_FROM_PTR(self));
+}
+
+static void link_enabled(bleio_adapter_obj_t *self, bool on) {
+    if (self->hci_transport->enabled != NULL) {
+        self->hci_transport->enabled(self->hci_transport_ctx, on);
+    }
+}
+#else
+#define link_enabled(self, on)
+#endif
 
 void common_hal_bleio_adapter_set_enabled(bleio_adapter_obj_t *self, bool enabled) {
     const bool is_enabled = common_hal_bleio_adapter_get_enabled(self);
@@ -331,6 +363,7 @@ void common_hal_bleio_adapter_set_enabled(bleio_adapter_obj_t *self, bool enable
     if (enabled) {
         self->enabled = true;
         supervisor_enable_tick();
+        link_enabled(self, true);
     }
 
     // Enabling or disabling: stop any current activity; reset to known state. While disabling,
@@ -342,6 +375,7 @@ void common_hal_bleio_adapter_set_enabled(bleio_adapter_obj_t *self, bool enable
     if (!enabled) {
         self->enabled = false;
         supervisor_disable_tick();
+        link_enabled(self, false);
     }
     self->now_advertising = false;
     self->circuitpython_advertising = false;
@@ -364,6 +398,7 @@ void common_hal_bleio_adapter_set_enabled(bleio_adapter_obj_t *self, bool enable
             // On failure, leave the adapter off.
             self->enabled = false;
             supervisor_disable_tick();
+            link_enabled(self, false);
             nlr_jump(nlr.ret_val);
         }
     }
