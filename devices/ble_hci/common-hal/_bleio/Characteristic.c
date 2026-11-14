@@ -119,8 +119,9 @@ void common_hal_bleio_characteristic_set_value(bleio_characteristic_obj_t *self,
                 mp_raise_bleio_BluetoothError(MP_ERROR_TEXT("Characteristic not writable"));
             }
         } else {
-            // Always write the value locally even if no connections are active.
-            bleio_characteristic_set_local_value(self, bufinfo);
+            // Always write the value locally even if no connections are active. Not to the
+            // observer: a CharacteristicBuffer gets the peer's writes, not the program's own.
+            self->value = mp_obj_new_bytes(bufinfo->buf, bufinfo->len);
             // Notify or indicate all active connections.
 
             uint16_t cccd_value = 0;
