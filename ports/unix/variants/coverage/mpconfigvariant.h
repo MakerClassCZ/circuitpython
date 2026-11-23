@@ -37,6 +37,14 @@
 #define MICROPY_GC_SPLIT_HEAP          (1)
 #define MICROPY_GC_SPLIT_HEAP_N_HEAPS  (4)
 
+// Enable testing of a heap that the GC grows and shrinks on demand.
+#define MICROPY_GC_SPLIT_HEAP_AUTO     (1)
+#include <stddef.h>
+void *unix_alloc_heap(size_t size);
+void unix_free_heap(void *heap);
+#define MP_PLAT_ALLOC_HEAP(size) unix_alloc_heap(size)
+#define MP_PLAT_FREE_HEAP(ptr) unix_free_heap(ptr)
+
 // Enable additional features.
 #define MICROPY_DEBUG_PARSE_RULE_NAME  (1)
 #define MICROPY_PY_SYS_SETTRACE        (1)
